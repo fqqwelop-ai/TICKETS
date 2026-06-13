@@ -4,10 +4,11 @@ process.on("uncaughtException",  e => console.error("[UncaughtException]",  e?.m
 const { initDB } = require("./db.js");
 
 async function main() {
+  console.log("🚀 بدء التشغيل...");
   await initDB();
-  require("./admin.js");       // /admin  — لوحة الأدمن
-  require("./dashboard.js");   // /       — داشبورد العملاء
-  setTimeout(() => require("./bot.js"), 1500);
+  console.log("✅ قاعدة البيانات جاهزة");
+  require("./server.js");
+  setTimeout(() => require("./bot.js"), 2000);
 }
 
 main().catch(e => console.error("[Startup Error]", e.message));
