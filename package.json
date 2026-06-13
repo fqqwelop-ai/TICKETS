@@ -1,0 +1,15 @@
+{
+  "name": "ticketbot-saas",
+  "version": "2.0.0",
+  "main": "start.js",
+  "scripts": { "start": "node start.js" },
+  "dependencies": {
+    "discord.js": "^14.15.3",
+    "express": "^4.18.2",
+    "express-session": "^1.18.0",
+    "axios": "^1.6.7",
+    "pg": "^8.11.3",
+    "bcryptjs": "^2.4.3",
+    "crypto": "^1.0.1"
+  }
+}
