@@ -189,9 +189,16 @@ async function handleCloseModal(interaction, lic) {
 
   // بناء transcript
   const messages = await interaction.channel.messages.fetch({ limit: 100 });
-  const transcript = [...messages.values()].reverse()
-    .map(m => `[${new Date(m.createdTimestamp).toLocaleString("ar-SA")}] ${m.author.username}: ${m.content}`)
-    .join("\n");
+  const msgs = [...messages.values()].reverse();
+  const transcript = `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8">
+<title>Ticket #${ticket.num}</title>
+<style>body{font-family:sans-serif;background:#0f1117;color:#e2e8f0;padding:24px;direction:rtl}
+.msg{background:#1a1d27;border-radius:8px;padding:12px 16px;margin-bottom:8px}
+.author{font-weight:700;color:#5865f2;margin-bottom:4px}.time{font-size:12px;color:#8892a4}
+h2{color:#fff;margin-bottom:16px}</style></head><body>
+<h2>🎫 تيكت #${ticket.num} — ${ticket.username || ticket.user_id}</h2>
+${msgs.map(m=>`<div class="msg"><div class="author">${m.author.username} <span class="time">${new Date(m.createdTimestamp).toLocaleString("ar-SA")}</span></div><div>${m.content||"[مرفق]"}</div></div>`).join("")}
+</body></html>`;
 
   await db.saveClosedTicket({
     licenseKey: lic.license_key, channelId, userId: ticket.user_id, username: ticket.username,
@@ -209,9 +216,16 @@ async function cmdCloseTicket(interaction, lic) {
   if (!ticket) return interaction.reply({ content: "❌ هذا الأمر يعمل داخل تيكت فقط", flags: 64 });
 
   const messages = await interaction.channel.messages.fetch({ limit: 100 });
-  const transcript = [...messages.values()].reverse()
-    .map(m => `[${new Date(m.createdTimestamp).toLocaleString("ar-SA")}] ${m.author.username}: ${m.content}`)
-    .join("\n");
+  const msgs2 = [...messages.values()].reverse();
+  const transcript = `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8">
+<title>Ticket #${ticket.num}</title>
+<style>body{font-family:sans-serif;background:#0f1117;color:#e2e8f0;padding:24px;direction:rtl}
+.msg{background:#1a1d27;border-radius:8px;padding:12px 16px;margin-bottom:8px}
+.author{font-weight:700;color:#5865f2;margin-bottom:4px}.time{font-size:12px;color:#8892a4}
+h2{color:#fff;margin-bottom:16px}</style></head><body>
+<h2>🎫 تيكت #${ticket.num} — ${ticket.username || ticket.user_id}</h2>
+${msgs2.map(m=>`<div class="msg"><div class="author">${m.author.username} <span class="time">${new Date(m.createdTimestamp).toLocaleString("ar-SA")}</span></div><div>${m.content||"[مرفق]"}</div></div>`).join("")}
+</body></html>`;
 
   await db.saveClosedTicket({
     licenseKey: lic.license_key, channelId: interaction.channelId, userId: ticket.user_id,
@@ -227,14 +241,19 @@ async function cmdCloseTicket(interaction, lic) {
 async function handleClaimTicket(interaction, lic) {
   const ticket = await db.getTicket(interaction.channelId);
   if (!ticket) return interaction.reply({ content: "❌ غير موجود", flags: 64 });
+  if (ticket.claimed_by) return interaction.reply({ content: `❌ التيكت مكلايم بالفعل بواسطة **${ticket.claimed_by}**`, flags: 64 });
   await db.claimTicket(interaction.channelId, interaction.user.username);
+  // تغيير اسم القناة
+  try { await interaction.channel.setName(`claimed-${ticket.num}`); } catch {}
   await interaction.reply({ content: `✋ تم كلايم التيكت بواسطة ${interaction.user}` });
 }
 
 async function cmdClaimTicket(interaction, lic) {
   const ticket = await db.getTicket(interaction.channelId);
   if (!ticket) return interaction.reply({ content: "❌ هذا الأمر يعمل داخل تيكت فقط", flags: 64 });
+  if (ticket.claimed_by) return interaction.reply({ content: `❌ التيكت مكلايم بالفعل بواسطة **${ticket.claimed_by}**`, flags: 64 });
   await db.claimTicket(interaction.channelId, interaction.user.username);
+  try { await interaction.channel.setName(`claimed-${ticket.num}`); } catch {}
   await interaction.reply({ content: `✋ تم كلايم التيكت بواسطة ${interaction.user}` });
 }
 
