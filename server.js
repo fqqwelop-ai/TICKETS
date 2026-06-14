@@ -575,7 +575,7 @@ app.get("/dashboard/history", requireAuth, async (req, res) => {
 
 app.get("/dashboard/settings", requireAuth, requireOwner, async (req, res) => {
   const lic = req.license;
-  const viewers = JSON.parse(lic.viewer_role_ids || "[]");
+  const viewers = (() => { try { return JSON.parse(lic.viewer_role_ids || "[]"); } catch { return []; } })();
   res.send(page("الإعدادات", `
     <h2 style="font-size:22px;font-weight:800;margin-bottom:24px">⚙️ الإعدادات</h2>
     <div class="grid-2">
@@ -584,6 +584,7 @@ app.get("/dashboard/settings", requireAuth, requireOwner, async (req, res) => {
         <div class="form-group"><label>Bot Token</label><input type="password" id="s_tok" value="${lic.bot_token||""}"></div>
         <div class="form-group"><label>Guild ID</label><input id="s_guild" value="${lic.guild_id||""}"></div>
         <div class="form-group"><label>Support Role ID</label><input id="s_role" value="${lic.support_role_id||""}"></div>
+        <div class="form-group"><label>Log Channel ID <small style="color:#8892a4">(روم اللوق)</small></label><input id="s_log" value="${lic.log_channel_id||""}"></div>
         <button class="btn btn-primary" onclick="saveBot()">💾 حفظ</button>
       </div>
       <div class="card">
@@ -591,7 +592,7 @@ app.get("/dashboard/settings", requireAuth, requireOwner, async (req, res) => {
         <p style="color:#8892a4;font-size:13px;margin-bottom:16px">حدد الرتب والصلاحيات المسموحة لكل رتبة</p>
         <div id="rolesList">
           ${viewers.map((r,i) => {
-            const robj = typeof r === 'object' ? r : {id: r, name: "", perms: ["tickets","panels","history"]};
+            const robj = (r && typeof r === 'object') ? r : {id: String(r||""), name: "", perms: ["tickets","panels","history"]};
             const perms = robj.perms || [];
             return `<div class="card" style="background:#0d1117;margin-bottom:12px" data-idx="${i}">
               <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
@@ -615,7 +616,7 @@ app.get("/dashboard/settings", requireAuth, requireOwner, async (req, res) => {
     </div>
     <script>
     const g=id=>document.getElementById(id).value;
-    async function saveBot(){const r=await post('/api/settings/save',{bot_token:g('s_tok')||null,guild_id:g('s_guild')||null,support_role_id:g('s_role')||null});toast(r.ok?'✅ تم':'❌ '+r.error,r.ok)}
+    async function saveBot(){const r=await post('/api/settings/save',{bot_token:g('s_tok')||null,guild_id:g('s_guild')||null,support_role_id:g('s_role')||null,log_channel_id:g('s_log')||null});toast(r.ok?'✅ تم':'❌ '+r.error,r.ok)}
     function addRole(){
       const div=document.createElement('div');
       div.className='card';div.style.cssText='background:#0d1117;margin-bottom:12px';
