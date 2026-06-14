@@ -58,6 +58,8 @@ async function initDB() {
       PRIMARY KEY (id, license_key)
     );
 
+    ALTER TABLE licenses ADD COLUMN IF NOT EXISTS log_channel_id TEXT;
+
     CREATE TABLE IF NOT EXISTS closed_tickets (
       id          SERIAL PRIMARY KEY,
       license_key TEXT NOT NULL,
@@ -158,6 +160,13 @@ async function saveClosedTicket(t) {
     [t.licenseKey, t.channelId, t.userId, t.username, t.panelId, t.num, t.closedBy, t.reason, t.transcript]
   );
 }
+async function saveClosedTicketReturn(t) {
+  const r = await pool.query(
+    "INSERT INTO closed_tickets (license_key, channel_id, user_id, username, panel_id, num, closed_by, reason, transcript) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *",
+    [t.licenseKey, t.channelId, t.userId, t.username, t.panelId, t.num, t.closedBy, t.reason, t.transcript]
+  );
+  return r.rows[0];
+}
 async function getClosedTickets(licenseKey) {
   const r = await pool.query("SELECT * FROM closed_tickets WHERE license_key=$1 ORDER BY closed_at DESC LIMIT 200", [licenseKey]);
   return r.rows;
@@ -168,5 +177,5 @@ module.exports = {
   getLicense, getLicenseByUser, getLicenseByDiscord, getAllLicenses, createLicense, updateLicense, deleteLicense,
   saveTicket, getTicket, getOpenTicket, closeTicket, claimTicket, getActiveTickets, nextTicketNum,
   getPanels, getPanel, savePanel, deletePanel, resetPanelCounter,
-  saveClosedTicket, getClosedTickets,
+  saveClosedTicket, saveClosedTicketReturn, getClosedTickets,
 };
