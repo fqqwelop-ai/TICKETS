@@ -309,7 +309,9 @@ async function requireAuth(req, res, next) {
   req.license    = lic;
   req.licenseKey = lic.license_key;
   req.isOwner    = req.session.isOwner || false;
-  req.isViewer   = !req.isOwner;
+  req.userPerms  = req.session.userPerms || [];
+  req.isViewer   = !req.isOwner && req.userPerms.length > 0;
+  req.hasPerm    = (p) => req.isOwner || req.userPerms.includes("all") || req.userPerms.includes(p);
   next();
 }
 
@@ -318,15 +320,16 @@ function requireOwner(req, res, next) {
   next();
 }
 
-function dashNav(active, isViewer) {
+function dashNav(active, req) {
+  const isOwner = req && req.isOwner;
+  const hp = (p) => isOwner || (req && req.hasPerm && req.hasPerm(p));
   return `
     <a href="/dashboard" class="nav-link ${active==="home"?"active":""}">🏠</a>
-    <a href="/dashboard/tickets" class="nav-link ${active==="tickets"?"active":""}">🎫 التيكتات</a>
-    <a href="/dashboard/panels" class="nav-link ${active==="panels"?"active":""}">📋 البانلات</a>
-    <a href="/dashboard/history" class="nav-link ${active==="history"?"active":""}">📁 السجل</a>
-    ${!isViewer ? `<a href="/dashboard/settings" class="nav-link ${active==="settings"?"active":""}">⚙️ الإعدادات</a>` : ""}
-    ${!isViewer ? `<a href="/dashboard/reset" class="nav-link ${active==="reset"?"active":""}">🔄 تصفير</a>` : ""}
-    <a href="/dashboard/messages" class="nav-link ${active==="messages"?"active":""}">📢 رسائل</a>
+    ${hp("tickets") ? `<a href="/dashboard/tickets" class="nav-link ${active==="tickets"?"active":""}">🎫 التيكتات</a>` : ""}
+    ${hp("panels")  ? `<a href="/dashboard/panels"  class="nav-link ${active==="panels"?"active":""}">📋 البانلات</a>`  : ""}
+    ${hp("history") ? `<a href="/dashboard/history" class="nav-link ${active==="history"?"active":""}">📁 السجل</a>`    : ""}
+    ${hp("settings")? `<a href="/dashboard/settings" class="nav-link ${active==="settings"?"active":""}">⚙️ الإعدادات</a>`: ""}
+    ${hp("reset")   ? `<a href="/dashboard/reset"   class="nav-link ${active==="reset"?"active":""}">🔄 تصفير</a>`    : ""}
     <a href="/logout" class="nav-link">خروج</a>
   `;
 }
@@ -403,13 +406,24 @@ app.get("/auth/callback", async (req, res) => {
     } catch {}
 
     const isOwner  = discordId === lic.discord_id;
-    const viewers  = JSON.parse(lic.viewer_role_ids || "[]");
-    const isViewer = !isOwner && viewers.some(r => roles.includes(r));
+    const rolePerms = JSON.parse(lic.viewer_role_ids || "[]");
+    // viewer_role_ids يخزن الآن [{id, name, perms:[]}]
+    let userPerms = [];
+    if (!isOwner) {
+      for (const rp of rolePerms) {
+        if (roles.includes(rp.id || rp)) {
+          userPerms = rp.perms || ["tickets","panels","history"];
+          break;
+        }
+      }
+    }
+    const isViewer = !isOwner && userPerms.length > 0;
 
     if (!isOwner && !isViewer) return res.send(`<h2 style="font-family:sans-serif;color:#ed4245;text-align:center;margin-top:60px">🚫 ليس لديك صلاحية</h2><a href="/login" style="display:block;text-align:center;margin-top:16px;color:#5865f2">رجوع</a>`);
 
     req.session.licenseKey = lic.license_key;
     req.session.isOwner    = isOwner;
+    req.session.userPerms  = isOwner ? ["all"] : userPerms;
     delete req.session.pendingUser;
     res.redirect("/dashboard");
   } catch(e) { console.error("[OAuth]", e.message); res.redirect("/login"); }
@@ -440,7 +454,7 @@ app.get("/dashboard", requireAuth, async (req, res) => {
     <table class="table"><thead><tr><th>#</th><th>المستخدم</th><th>البانل</th><th>الوقت</th></tr></thead><tbody>
     ${tickets.slice(0,10).map(t=>`<tr><td><b>#${t.num}</b></td><td>${t.username||t.user_id}</td><td>${t.panel_id}</td><td style="color:#8892a4;font-size:13px">${new Date(t.created_at).toLocaleString("ar-SA")}</td></tr>`).join("")}
     </tbody></table></div>` : `<div class="card" style="text-align:center;padding:40px;color:#8892a4">🎫 لا توجد تيكتات مفتوحة</div>`}
-  `, dashNav("home", req.isViewer)));
+  `, dashNav("home", req)));
 });
 
 app.get("/dashboard/tickets", requireAuth, async (req, res) => {
@@ -451,7 +465,7 @@ app.get("/dashboard/tickets", requireAuth, async (req, res) => {
     ${tickets.length ? tickets.map(t=>`<tr><td><b>#${t.num}</b></td><td>${t.username||t.user_id}</td><td><span class="badge badge-green">${t.panel_id}</span></td><td>${t.claimed_by?`<span class="badge badge-yellow">✋ ${t.claimed_by}`:"<span style='color:#8892a4'>—</span>"}</span></td><td style="color:#8892a4;font-size:13px">${new Date(t.created_at).toLocaleString("ar-SA")}</td></tr>`).join("")
     : `<tr><td colspan="5" style="text-align:center;color:#8892a4;padding:32px">لا توجد تيكتات</td></tr>`}
     </tbody></table></div>
-  `, dashNav("tickets", req.isViewer)));
+  `, dashNav("tickets", req)));
 });
 
 app.get("/dashboard/panels", requireAuth, async (req, res) => {
@@ -545,18 +559,18 @@ app.get("/dashboard/panels", requireAuth, async (req, res) => {
     }
     loadPanels();
     </script>
-  `, dashNav("panels", req.isViewer)));
+  `, dashNav("panels", req)));
 });
 
 app.get("/dashboard/history", requireAuth, async (req, res) => {
   const tickets = await db.getClosedTickets(req.licenseKey);
   res.send(page("السجل", `
     <h2 style="font-size:22px;font-weight:800;margin-bottom:24px">📁 السجل (${tickets.length})</h2>
-    <div class="card"><table class="table"><thead><tr><th>#</th><th>المستخدم</th><th>البانل</th><th>أُغلق بواسطة</th><th>السبب</th><th>التاريخ</th></tr></thead><tbody>
-    ${tickets.length ? tickets.map(t=>`<tr><td><b>#${t.num}</b></td><td>${t.username||"—"}</td><td>${t.panel_id||"—"}</td><td>${t.closed_by||"—"}</td><td style="color:#8892a4;font-size:13px">${t.reason||"—"}</td><td style="color:#8892a4;font-size:13px">${new Date(t.closed_at).toLocaleString("ar-SA")}</td></tr>`).join("")
+    <div class="card"><table class="table"><thead><tr><th>#</th><th>المستخدم</th><th>البانل</th><th>أُغلق بواسطة</th><th>السبب</th><th>التاريخ</th><th>📄</th></tr></thead><tbody>
+    ${tickets.length ? tickets.map(t=>`<tr><td><b>#${t.num}</b></td><td>${t.username||"—"}</td><td>${t.panel_id||"—"}</td><td>${t.closed_by||"—"}</td><td style="color:#8892a4;font-size:13px">${t.reason||"—"}</td><td style="color:#8892a4;font-size:13px">${new Date(t.closed_at).toLocaleString("ar-SA")}</td><td>${t.transcript?`<a href="/dashboard/transcript/${t.id}" target="_blank" class="btn btn-ghost" style="padding:4px 10px;font-size:12px">📄</a>`:"—"}</td></tr>`).join("")
     : `<tr><td colspan="6" style="text-align:center;color:#8892a4;padding:32px">لا يوجد سجل</td></tr>`}
     </tbody></table></div>
-  `, dashNav("history", req.isViewer)));
+  `, dashNav("history", req)));
 });
 
 app.get("/dashboard/settings", requireAuth, requireOwner, async (req, res) => {
@@ -573,22 +587,61 @@ app.get("/dashboard/settings", requireAuth, requireOwner, async (req, res) => {
         <button class="btn btn-primary" onclick="saveBot()">💾 حفظ</button>
       </div>
       <div class="card">
-        <div class="card-title">👁️ رتب المشاهدة</div>
-        <p style="color:#8892a4;font-size:13px;margin-bottom:16px">Role IDs للأشخاص الذين يشاهدون الداشبورد (بدون صلاحية التعديل)</p>
+        <div class="card-title">👁️ رتب الصلاحيات</div>
+        <p style="color:#8892a4;font-size:13px;margin-bottom:16px">حدد الرتب والصلاحيات المسموحة لكل رتبة</p>
         <div id="rolesList">
-          ${viewers.map(r=>`<div style="display:flex;gap:8px;margin-bottom:8px"><input class="vr" value="${r}" style="background:#0d1117;border:1px solid #2d3148;border-radius:8px;padding:8px 12px;color:#e2e8f0;flex:1"><button class="btn btn-danger" style="padding:8px 12px" onclick="this.parentElement.remove()">✕</button></div>`).join("")}
+          ${viewers.map((r,i) => {
+            const robj = typeof r === 'object' ? r : {id: r, name: "", perms: ["tickets","panels","history"]};
+            const perms = robj.perms || [];
+            return `<div class="card" style="background:#0d1117;margin-bottom:12px" data-idx="${i}">
+              <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+                <input class="rname" placeholder="اسم الرتبة" value="${robj.name||""}" style="background:#1a1d27;border:1px solid #2d3148;border-radius:8px;padding:8px 12px;color:#e2e8f0;flex:1;min-width:120px">
+                <input class="rid" placeholder="Role ID" value="${robj.id||""}" style="background:#1a1d27;border:1px solid #2d3148;border-radius:8px;padding:8px 12px;color:#e2e8f0;flex:1;min-width:150px">
+                <button class="btn btn-danger" style="padding:8px 12px" onclick="this.closest('[data-idx]').remove()">✕</button>
+              </div>
+              <div style="display:flex;gap:12px;flex-wrap:wrap">
+                ${[["tickets","🎫 التيكتات"],["panels","📋 البانلات"],["history","📁 السجل"],["settings","⚙️ الإعدادات"],["reset","🔄 التصفير"]].map(([p,label])=>`
+                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
+                  <input type="checkbox" class="perm-${p}" ${perms.includes(p)?"checked":""} style="width:16px;height:16px">
+                  ${label}
+                </label>`).join("")}
+              </div>
+            </div>`;
+          }).join("")}
         </div>
-        <button class="btn btn-ghost" style="margin-top:8px" onclick="addRole()">➕ إضافة</button>
+        <button class="btn btn-ghost" style="margin-top:8px" onclick="addRole()">➕ إضافة رتبة</button>
         <button class="btn btn-primary" style="margin-top:12px;margin-right:8px" onclick="saveRoles()">💾 حفظ الرتب</button>
       </div>
     </div>
     <script>
     const g=id=>document.getElementById(id).value;
     async function saveBot(){const r=await post('/api/settings/save',{bot_token:g('s_tok')||null,guild_id:g('s_guild')||null,support_role_id:g('s_role')||null});toast(r.ok?'✅ تم':'❌ '+r.error,r.ok)}
-    function addRole(){const d=document.createElement('div');d.style.cssText='display:flex;gap:8px;margin-bottom:8px';d.innerHTML='<input class="vr" placeholder="Role ID" style="background:#0d1117;border:1px solid #2d3148;border-radius:8px;padding:8px 12px;color:#e2e8f0;flex:1"><button class="btn btn-danger" style="padding:8px 12px" onclick="this.parentElement.remove()">✕</button>';document.getElementById('rolesList').appendChild(d)}
-    async function saveRoles(){const roles=[...document.querySelectorAll('.vr')].map(e=>e.value.trim()).filter(Boolean);const r=await post('/api/settings/save',{viewer_role_ids:JSON.stringify(roles)});toast(r.ok?'✅ تم':'❌ '+r.error,r.ok)}
+    function addRole(){
+      const div=document.createElement('div');
+      div.className='card';div.style.cssText='background:#0d1117;margin-bottom:12px';
+      div.setAttribute('data-idx','new_'+Date.now());
+      const permsHtml=['tickets:🎫 التيكتات','panels:📋 البانلات','history:📁 السجل','settings:⚙️ الإعدادات','reset:🔄 التصفير']
+        .map(s=>{const[p,l]=s.split(':');return '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px"><input type="checkbox" class="perm-'+p+'" style="width:16px;height:16px"> '+l+'</label>';}).join('');
+      div.innerHTML='<div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">'
+        +'<input class="rname" placeholder="اسم الرتبة" style="background:#1a1d27;border:1px solid #2d3148;border-radius:8px;padding:8px 12px;color:#e2e8f0;flex:1;min-width:120px">'
+        +'<input class="rid" placeholder="Role ID" style="background:#1a1d27;border:1px solid #2d3148;border-radius:8px;padding:8px 12px;color:#e2e8f0;flex:1;min-width:150px">'
+        +'<button class="btn btn-danger" style="padding:8px 12px" onclick="this.closest('[data-idx]').remove()">✕</button>'
+        +'</div><div style="display:flex;gap:12px;flex-wrap:wrap">'+permsHtml+'</div>';
+      document.getElementById('rolesList').appendChild(div);
+    }
+    async function saveRoles(){
+      const cards=[...document.querySelectorAll('#rolesList [data-idx]')];
+      const roles=cards.map(c=>{
+        const id=(c.querySelector('.rid')||{}).value||"";
+        const name=(c.querySelector('.rname')||{}).value||"";
+        const perms=['tickets','panels','history','settings','reset'].filter(p=>c.querySelector('.perm-'+p)?.checked);
+        return id?{id,name,perms}:null;
+      }).filter(Boolean);
+      const r=await post('/api/settings/save',{viewer_role_ids:JSON.stringify(roles)});
+      toast(r.ok?'✅ تم حفظ الرتب':'❌ '+r.error,r.ok);
+    }
     </script>
-  `, dashNav("settings", false)));
+  `, dashNav("settings", req)));
 });
 
 app.get("/dashboard/reset", requireAuth, requireOwner, async (req, res) => {
@@ -614,21 +667,19 @@ app.get("/dashboard/reset", requireAuth, requireOwner, async (req, res) => {
     async function resetP(id){if(!confirm('تصفير؟'))return;const r=await post('/api/reset/panel',{panel_id:id});toast(r.ok?'✅':'❌ '+r.error,r.ok);if(r.ok)setTimeout(()=>location.reload(),800)}
     async function clearH(){if(!confirm('حذف كل السجل؟'))return;const r=await post('/api/reset/history',{});toast(r.ok?'✅':'❌ '+r.error,r.ok)}
     </script>
-  `, dashNav("reset", false)));
+  `, dashNav("reset", req)));
 });
 
-app.get("/dashboard/messages", requireAuth, async (req, res) => {
-  res.send(page("رسائل", `
-    <h2 style="font-size:22px;font-weight:800;margin-bottom:24px">📢 إرسال رسالة</h2>
-    <div class="card">
-      <div class="form-group"><label>Channel ID</label><input id="m_ch" placeholder="1234567890"></div>
-      <div class="form-group"><label>الرسالة</label><textarea id="m_msg" style="min-height:120px"></textarea></div>
-      <button class="btn btn-primary" onclick="sendMsg()">📤 إرسال</button>
-    </div>
-    <script>
-    async function sendMsg(){const r=await post('/api/message/send',{channel_id:document.getElementById('m_ch').value,content:document.getElementById('m_msg').value});toast(r.ok?'✅ تم':'❌ '+r.error,r.ok)}
-    </script>
-  `, dashNav("messages", req.isViewer)));
+
+
+// Transcript
+app.get("/dashboard/transcript/:id", requireAuth, async (req, res) => {
+  try {
+    const r = await db.pool.query("SELECT * FROM closed_tickets WHERE id=$1 AND license_key=$2", [req.params.id, req.licenseKey]);
+    const t = r.rows[0];
+    if (!t || !t.transcript) return res.send("<h2>لا يوجد transcript</h2>");
+    res.send(t.transcript);
+  } catch(e) { res.send("<h2>خطأ</h2>"); }
 });
 
 // Dashboard APIs
