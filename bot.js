@@ -102,6 +102,106 @@ async function handleInteraction(interaction, lic) {
   }
 }
 
+// ─── Transcript HTML ──────────────────────────────────────────────────────────
+function buildTranscriptHTML(ticket, messages, dashUrl) {
+  const msgs = [...messages.values()].reverse();
+  return `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8">
+<title>تيكت #${ticket.num}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',sans-serif;background:#0f1117;color:#e2e8f0;padding:24px;direction:rtl}
+.header{background:#1a1d27;border:1px solid #2d3148;border-radius:16px;padding:24px;margin-bottom:24px}
+.header h1{font-size:20px;font-weight:800;margin-bottom:16px;color:#5865f2}
+.meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
+.meta-item{background:#0d1117;border-radius:10px;padding:12px}
+.meta-label{font-size:11px;color:#8892a4;margin-bottom:4px}
+.meta-val{font-size:14px;font-weight:600}
+.msgs{display:flex;flex-direction:column;gap:8px}
+.msg{background:#1a1d27;border-radius:10px;padding:12px 16px;border-right:3px solid #5865f2}
+.msg.bot{border-right-color:#57f287}
+.msg-header{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.author{font-weight:700;font-size:14px}
+.time{font-size:12px;color:#8892a4}
+.content{font-size:14px;line-height:1.5;white-space:pre-wrap}
+.attach{color:#5865f2;font-size:13px;margin-top:4px}
+</style></head><body>
+<div class="header">
+  <h1>🎫 تيكت #${ticket.num} — ${ticket.username || ticket.user_id}</h1>
+  <div class="meta">
+    <div class="meta-item"><div class="meta-label">👤 فاتح التيكت</div><div class="meta-val">${ticket.username || ticket.user_id}</div></div>
+    <div class="meta-item"><div class="meta-label">📋 البانل</div><div class="meta-val">${ticket.panel_id}</div></div>
+    <div class="meta-item"><div class="meta-label">💬 عدد الرسائل</div><div class="meta-val">${msgs.length}</div></div>
+    <div class="meta-item"><div class="meta-label">🕐 تاريخ الفتح</div><div class="meta-val">${new Date(ticket.created_at).toLocaleString("ar-SA")}</div></div>
+  </div>
+</div>
+<div class="msgs">
+${msgs.map(m => `<div class="msg${m.author.bot?" bot":""}">
+  <div class="msg-header"><span class="author">${m.author.username}</span><span class="time">${new Date(m.createdTimestamp).toLocaleString("ar-SA")}</span></div>
+  ${m.content ? `<div class="content">${m.content.replace(/</g,"&lt;").replace(/>/g,"&gt;")}</div>` : ""}
+  ${m.attachments.size ? `<div class="attach">📎 ${[...m.attachments.values()].map(a=>`<a href="${a.url}" style="color:#5865f2">${a.name}</a>`).join(", ")}</div>` : ""}
+</div>`).join("")}
+</div>
+</body></html>`;
+}
+
+// ─── Send Log ──────────────────────────────────────────────────────────────────
+async function sendCloseLog(guild, lic, ticket, closedBy, reason, transcriptId, dashUrl) {
+  try {
+    const logChannelId = lic.log_channel_id;
+    if (!logChannelId) return;
+    const ch = await guild.channels.fetch(logChannelId).catch(() => null);
+    if (!ch) return;
+
+    const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
+    const embed = new EmbedBuilder()
+      .setTitle(`📁 سجّل تيكت #${ticket.num}`)
+      .setColor(0xed4245)
+      .addFields(
+        { name: "👤 فاتح التيكت", value: `<@${ticket.user_id}>`, inline: true },
+        { name: "🔒 أُغلق بواسطة", value: closedBy, inline: true },
+        { name: "📋 البانل", value: ticket.panel_id || "—", inline: true },
+        { name: "📝 السبب", value: reason || "—", inline: false },
+        { name: "🕐 وقت الإغلاق", value: `<t:${Math.floor(Date.now()/1000)}:F>`, inline: false },
+      )
+      .setFooter({ text: `ticket-${ticket.num}` });
+
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setLabel("📄 عرض المحادثة الكاملة")
+        .setURL(dashUrl ? `${dashUrl}/dashboard/transcript/${transcriptId}` : "https://example.com")
+        .setStyle(ButtonStyle.Link)
+    );
+
+    await ch.send({ embeds: [embed], components: row ? [row] : [] });
+  } catch(e) { console.error("[Log Error]", e.message); }
+}
+
+// ─── DM على إغلاق التيكت ──────────────────────────────────────────────────────
+async function dmOnClose(client, ticket, reason, transcriptId, dashUrl) {
+  try {
+    const user = await client.users.fetch(ticket.user_id).catch(() => null);
+    if (!user) return;
+    const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
+    const embed = new EmbedBuilder()
+      .setTitle("🔒 تم إغلاق تيكتك")
+      .setColor(0xed4245)
+      .setDescription(`تم إغلاق تيكتك **#${ticket.num}**`)
+      .addFields(
+        { name: "📝 السبب", value: reason || "—", inline: false },
+        { name: "🕐 وقت الإغلاق", value: `<t:${Math.floor(Date.now()/1000)}:F>`, inline: false },
+      );
+
+    const row = dashUrl ? new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setLabel("📄 عرض المحادثة")
+        .setURL(`${dashUrl}/dashboard/transcript/${transcriptId}`)
+        .setStyle(ButtonStyle.Link)
+    ) : null;
+
+    await user.send({ embeds: [embed], ...(row ? { components: [row] } : {}) });
+  } catch(e) { console.error("[DM Error]", e.message); }
+}
+
 // ─── Open Ticket ───────────────────────────────────────────────────────────────
 async function handleOpenTicket(interaction, lic, panelId) {
   await interaction.deferReply({ flags: 64 });
@@ -189,22 +289,19 @@ async function handleCloseModal(interaction, lic) {
 
   // بناء transcript
   const messages = await interaction.channel.messages.fetch({ limit: 100 });
-  const msgs = [...messages.values()].reverse();
-  const transcript = `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8">
-<title>Ticket #${ticket.num}</title>
-<style>body{font-family:sans-serif;background:#0f1117;color:#e2e8f0;padding:24px;direction:rtl}
-.msg{background:#1a1d27;border-radius:8px;padding:12px 16px;margin-bottom:8px}
-.author{font-weight:700;color:#5865f2;margin-bottom:4px}.time{font-size:12px;color:#8892a4}
-h2{color:#fff;margin-bottom:16px}</style></head><body>
-<h2>🎫 تيكت #${ticket.num} — ${ticket.username || ticket.user_id}</h2>
-${msgs.map(m=>`<div class="msg"><div class="author">${m.author.username} <span class="time">${new Date(m.createdTimestamp).toLocaleString("ar-SA")}</span></div><div>${m.content||"[مرفق]"}</div></div>`).join("")}
-</body></html>`;
+  const transcript = buildTranscriptHTML(ticket, messages, lic.dashboard_url || "");
 
-  await db.saveClosedTicket({
+  const saved = await db.saveClosedTicketReturn({
     licenseKey: lic.license_key, channelId, userId: ticket.user_id, username: ticket.username,
     panelId: ticket.panel_id, num: ticket.num, closedBy: interaction.user.username, reason, transcript,
   });
   await db.closeTicket(channelId);
+
+  const dashUrl = lic.dashboard_url || "";
+  if (saved) {
+    await sendCloseLog(interaction.guild, lic, ticket, interaction.user.username, reason, saved.id, dashUrl);
+    await dmOnClose(interaction.client, ticket, reason, saved.id, dashUrl);
+  }
 
   await interaction.editReply({ content: "🔒 جاري إغلاق التيكت..." });
   setTimeout(() => interaction.channel.delete().catch(() => {}), 3000);
@@ -216,45 +313,62 @@ async function cmdCloseTicket(interaction, lic) {
   if (!ticket) return interaction.reply({ content: "❌ هذا الأمر يعمل داخل تيكت فقط", flags: 64 });
 
   const messages = await interaction.channel.messages.fetch({ limit: 100 });
-  const msgs2 = [...messages.values()].reverse();
-  const transcript = `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8">
-<title>Ticket #${ticket.num}</title>
-<style>body{font-family:sans-serif;background:#0f1117;color:#e2e8f0;padding:24px;direction:rtl}
-.msg{background:#1a1d27;border-radius:8px;padding:12px 16px;margin-bottom:8px}
-.author{font-weight:700;color:#5865f2;margin-bottom:4px}.time{font-size:12px;color:#8892a4}
-h2{color:#fff;margin-bottom:16px}</style></head><body>
-<h2>🎫 تيكت #${ticket.num} — ${ticket.username || ticket.user_id}</h2>
-${msgs2.map(m=>`<div class="msg"><div class="author">${m.author.username} <span class="time">${new Date(m.createdTimestamp).toLocaleString("ar-SA")}</span></div><div>${m.content||"[مرفق]"}</div></div>`).join("")}
-</body></html>`;
+  const transcript = buildTranscriptHTML(ticket, messages, lic.dashboard_url || "");
 
-  await db.saveClosedTicket({
+  const saved2 = await db.saveClosedTicketReturn({
     licenseKey: lic.license_key, channelId: interaction.channelId, userId: ticket.user_id,
     username: ticket.username, panelId: ticket.panel_id, num: ticket.num,
     closedBy: interaction.user.username, reason, transcript,
   });
   await db.closeTicket(interaction.channelId);
+
+  const dashUrl2 = lic.dashboard_url || "";
+  if (saved2) {
+    await sendCloseLog(interaction.guild, lic, ticket, interaction.user.username, reason, saved2.id, dashUrl2);
+    await dmOnClose(interaction.client, ticket, reason, saved2.id, dashUrl2);
+  }
+
   await interaction.reply({ content: `🔒 تم إغلاق التيكت بواسطة ${interaction.user} — السبب: ${reason}` });
   setTimeout(() => interaction.channel.delete().catch(() => {}), 3000);
 }
 
 // ─── Claim Ticket ──────────────────────────────────────────────────────────────
+// تتبع الكلايمات المؤقتة لمنع الضغط المزدوج
+const claimCooldown = new Map(); // channelId → { userId, timeout }
+
 async function handleClaimTicket(interaction, lic) {
   const ticket = await db.getTicket(interaction.channelId);
   if (!ticket) return interaction.reply({ content: "❌ غير موجود", flags: 64 });
-  if (ticket.claimed_by) return interaction.reply({ content: `❌ التيكت مكلايم بالفعل بواسطة **${ticket.claimed_by}**`, flags: 64 });
+
+  const existing = claimCooldown.get(interaction.channelId);
+
+  // 4. لو عنده كلايم مسبق من نفس اليوزر → تجاهل
+  if (existing && existing.userId === interaction.user.id) {
+    return interaction.reply({ content: "⏳ انتظر قبل الضغط مرة أخرى", flags: 64 });
+  }
+
+  // 3. لو ضغط شخص ثاني خلال 6 ثواني → unclaim
+  if (existing && existing.userId !== interaction.user.id) {
+    clearTimeout(existing.timeout);
+    claimCooldown.delete(interaction.channelId);
+    await db.claimTicket(interaction.channelId, null);
+    try { await interaction.channel.setName(`ticket-${ticket.num}`); } catch {}
+    return interaction.reply({ content: `🔓 تم إزالة الكلايم` });
+  }
+
+  // كلايم جديد
   await db.claimTicket(interaction.channelId, interaction.user.username);
-  // تغيير اسم القناة
-  try { await interaction.channel.setName(`claimed-${ticket.num}`); } catch {}
+  // 1. اسم القناة: 🟡username-num
+  try { await interaction.channel.setName(`🟡${interaction.user.username}-${ticket.num}`); } catch {}
   await interaction.reply({ content: `✋ تم كلايم التيكت بواسطة ${interaction.user}` });
+
+  // 3. بعد 6 ثواني يُسمح بالـ unclaim
+  const t = setTimeout(() => claimCooldown.delete(interaction.channelId), 6000);
+  claimCooldown.set(interaction.channelId, { userId: interaction.user.id, timeout: t });
 }
 
 async function cmdClaimTicket(interaction, lic) {
-  const ticket = await db.getTicket(interaction.channelId);
-  if (!ticket) return interaction.reply({ content: "❌ هذا الأمر يعمل داخل تيكت فقط", flags: 64 });
-  if (ticket.claimed_by) return interaction.reply({ content: `❌ التيكت مكلايم بالفعل بواسطة **${ticket.claimed_by}**`, flags: 64 });
-  await db.claimTicket(interaction.channelId, interaction.user.username);
-  try { await interaction.channel.setName(`claimed-${ticket.num}`); } catch {}
-  await interaction.reply({ content: `✋ تم كلايم التيكت بواسطة ${interaction.user}` });
+  await handleClaimTicket(interaction, lic);
 }
 
 // ─── Send Panel ────────────────────────────────────────────────────────────────
