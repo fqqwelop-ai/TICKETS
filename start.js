@@ -1,19 +1,13 @@
 process.on("unhandledRejection", e => console.error("[UnhandledRejection]", e?.message || e));
 process.on("uncaughtException",  e => console.error("[UncaughtException]",  e?.message || e));
 
-if (global.__STARTED__) {
-  console.error("[WARN] start.js نودي مرتين — تجاهل");
-  process.exit(0);
-}
-global.__STARTED__ = true;
-
 const { initDB } = require("./db.js");
 
 async function main() {
   console.log("🚀 بدء التشغيل...");
   await initDB();
   console.log("✅ قاعدة البيانات جاهزة");
-  require("./server.js");
+  require("./app.js");
   setTimeout(() => require("./bot.js"), 2000);
 }
 
