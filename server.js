@@ -584,6 +584,7 @@ app.get("/dashboard/settings", requireAuth, requireOwner, async (req, res) => {
         <div class="card-title">🤖 البوت</div>
         <div class="form-group"><label>Bot Token</label><input type="password" id="s_tok" value="${lic.bot_token||""}"></div>
         <div class="form-group"><label>Guild ID</label><input id="s_guild" value="${lic.guild_id||""}"></div>
+        <div class="form-group"><label>Dashboard URL</label><input id="s_url" value="${lic.dashboard_url||""}" placeholder="https://ticketss.up.railway.app"></div>
         <div class="form-group"><label>Support Role ID</label><input id="s_role" value="${lic.support_role_id||""}"></div>
         <div class="form-group"><label>Log Channel ID <small style="color:#8892a4">(روم اللوق — يُنشأ تلقائياً لو فارغ)</small></label><input id="s_log" value="${lic.log_channel_id||""}"></div>
         <div class="form-group"><label>Closed Role ID <small style="color:#8892a4">(رتبة تشوف التيكتات المغلقة)</small></label><input id="s_closed" value="${lic.closed_role_id||""}"></div>
@@ -618,7 +619,7 @@ app.get("/dashboard/settings", requireAuth, requireOwner, async (req, res) => {
     </div>
     <script>
     const g=id=>document.getElementById(id).value;
-    async function saveBot(){const r=await post('/api/settings/save',{bot_token:g('s_tok')||null,guild_id:g('s_guild')||null,support_role_id:g('s_role')||null,log_channel_id:g('s_log')||null,closed_role_id:g('s_closed')||null});toast(r.ok?'✅ تم':'❌ '+r.error,r.ok)}
+    async function saveBot(){const r=await post('/api/settings/save',{bot_token:g('s_tok')||null,guild_id:g('s_guild')||null,dashboard_url:g('s_url')||null,support_role_id:g('s_role')||null,log_channel_id:g('s_log')||null,closed_role_id:g('s_closed')||null});toast(r.ok?'✅ تم':'❌ '+r.error,r.ok)}
     function addRole(){
       const div=document.createElement('div');
       div.className='card';div.style.cssText='background:#0d1117;margin-bottom:12px';
@@ -735,5 +736,17 @@ app.post("/api/message/send", requireAuth, async (req, res) => {
 });
 
 // ─── Start Server ─────────────────────────────────────────────────────────────
-app.listen(PORT, () => console.log(`🌐 الخادم شغال على المنفذ ${PORT}`));
+// منع تشغيل الخادم أكثر من مرة
+if (!global._serverStarted) {
+  global._serverStarted = true;
+  const server = app.listen(PORT, () => console.log(`🌐 الخادم شغال على المنفذ ${PORT}`));
+  server.on("error", err => {
+    if (err.code === "EADDRINUSE") {
+      console.error(`[Server] ❌ المنفذ ${PORT} مشغول — تأكد إن الخادم ما يُشغَّل مرتين`);
+    } else {
+      console.error("[Server Error]", err.message);
+    }
+  });
+  process.on("SIGTERM", () => server.close());
+}
 module.exports = app;
