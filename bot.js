@@ -78,10 +78,11 @@ async function handleInteraction(interaction, lic) {
 
     if (interaction.isButton()) {
       const [action, ...rest] = interaction.customId.split(":");
-      if (action === "open_ticket") await handleOpenTicket(interaction, lic, rest[0]);
-      if (action === "close_ticket") await handleCloseTicket(interaction, lic);
-      if (action === "claim_ticket") await handleClaimTicket(interaction, lic);
+      if (action === "open_ticket")   await handleOpenTicket(interaction, lic, rest[0]);
+      if (action === "close_ticket")  await handleCloseTicket(interaction, lic);
+      if (action === "claim_ticket")  await handleClaimTicket(interaction, lic);
       if (action === "confirm_close") await handleConfirmClose(interaction, lic);
+      if (action === "delete_ticket") await handleDeleteTicket(interaction, lic);
     }
 
     if (interaction.isModalSubmit()) {
@@ -206,6 +207,8 @@ async function dmOnClose(client, ticket, reason, transcriptId, dashUrl) {
     const user = await client.users.fetch(ticket.user_id).catch(() => null);
     if (!user) return;
     const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
+    const transcriptUrl = dashUrl && transcriptId ? `${dashUrl}/transcript/${transcriptId}` : null;
+
     const embed = new EmbedBuilder()
       .setTitle("🔒 تم إغلاق تيكتك")
       .setColor(0xed4245)
@@ -213,16 +216,17 @@ async function dmOnClose(client, ticket, reason, transcriptId, dashUrl) {
       .addFields(
         { name: "📝 السبب", value: reason || "—", inline: false },
         { name: "🕐 وقت الإغلاق", value: `<t:${Math.floor(Date.now()/1000)}:F>`, inline: false },
+        ...(transcriptUrl ? [{ name: "📄 المحادثة", value: transcriptUrl, inline: false }] : []),
       );
 
-    const row = dashUrl ? new ActionRowBuilder().addComponents(
+    const dmRow = transcriptUrl ? new ActionRowBuilder().addComponents(
       new ButtonBuilder()
-        .setLabel("📄 عرض المحادثة")
-        .setURL(`${dashUrl}/dashboard/transcript/${transcriptId}`)
+        .setLabel("📄 عرض المحادثة الكاملة")
+        .setURL(transcriptUrl)
         .setStyle(ButtonStyle.Link)
     ) : null;
 
-    await user.send({ embeds: [embed], ...(row ? { components: [row] } : {}) });
+    await user.send({ embeds: [embed], ...(dmRow ? { components: [dmRow] } : {}) });
   } catch(e) { console.error("[DM Error]", e.message); }
 }
 
@@ -379,20 +383,27 @@ async function lockTicketChannel(channel, guild, lic, ticket, transcriptId, dash
       .setColor(0x2b2d31)
       .setTimestamp();
 
-    const components = [];
-    if (dashUrl && transcriptId) {
-      components.push(new ActionRowBuilder().addComponents(
+    const row = new ActionRowBuilder().addComponents(
+      ...(dashUrl && transcriptId ? [
         new ButtonBuilder()
           .setLabel("📄 عرض المحادثة الكاملة")
           .setURL(`${dashUrl}/dashboard/transcript/${transcriptId}`)
           .setStyle(ButtonStyle.Link)
-      ));
-    }
+      ] : []),
+      new ButtonBuilder()
+        .setCustomId(`delete_ticket:${ticket.num}`)
+        .setLabel("🗑️ حذف التيكت")
+        .setStyle(ButtonStyle.Danger)
+    );
 
-    await channel.send({ embeds: [embed], components });
+    await channel.send({ embeds: [embed], components: [row] });
 
-    // ٣. إنشاء أو إيجاد Log Channel وإرسال السجل فيه
-    await sendCloseLog(guild, lic, ticket, ticket.claimed_by || "—", "—", transcriptId, dashUrl);
+    // ٣. Log Channel — من البانل أولاً ثم من الإعدادات العامة
+    const panel = await require("./db.js").getPanel(lic.license_key, ticket.panel_id).catch(() => null);
+    const licForLog = panel && panel.log_channel_id
+      ? { ...lic, log_channel_id: panel.log_channel_id }
+      : lic;
+    await sendCloseLog(guild, licForLog, ticket, ticket.claimed_by || "—", "—", transcriptId, dashUrl);
 
   } catch(e) {
     console.error("[LockChannel Error]", e.message);
@@ -438,6 +449,24 @@ async function handleClaimTicket(interaction, lic) {
 
 async function cmdClaimTicket(interaction, lic) {
   await handleClaimTicket(interaction, lic);
+}
+
+// ─── Delete Ticket ────────────────────────────────────────────────────────────
+async function handleDeleteTicket(interaction, lic) {
+  // تحقق من الصلاحية — support role أو closed role
+  try {
+    const member = interaction.member;
+    const supportRole = lic.support_role_id;
+    const closedRole  = lic.closed_role_id;
+    const hasRole = (supportRole && member.roles.cache.has(supportRole))
+                 || (closedRole  && member.roles.cache.has(closedRole))
+                 || member.permissions.has("Administrator");
+    if (!hasRole) return interaction.reply({ content: "❌ ليس لديك صلاحية حذف التيكت", flags: 64 });
+    await interaction.reply({ content: "🗑️ جاري حذف القناة...", flags: 64 });
+    setTimeout(() => interaction.channel.delete().catch(() => {}), 2000);
+  } catch(e) {
+    interaction.reply({ content: "❌ " + e.message, flags: 64 });
+  }
 }
 
 // ─── Send Panel ────────────────────────────────────────────────────────────────
