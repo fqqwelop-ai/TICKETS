@@ -308,8 +308,8 @@ async function requireAuth(req, res, next) {
   }
   req.license    = lic;
   req.licenseKey = lic.license_key;
-  req.isOwner    = req.session.isOwner || false;
-  req.userPerms  = req.session.userPerms || [];
+  req.isOwner    = req.session.isOwner === true;
+  req.userPerms  = req.session.userPerms || (req.isOwner ? ["all"] : []);
   req.isViewer   = !req.isOwner && req.userPerms.length > 0;
   req.hasPerm    = (p) => req.isOwner || req.userPerms.includes("all") || req.userPerms.includes(p);
   next();
@@ -532,6 +532,7 @@ app.get("/dashboard/panels", requireAuth, async (req, res) => {
               <div class="form-group"><label>لون ترحيب</label><input type="color" id="e_wcolor_\${p.id}" style="height:40px"></div>
               <div class="form-group"><label>Category ID</label><input id="e_cat_\${p.id}"></div>
               <div class="form-group"><label>Support Role ID</label><input id="e_role_\${p.id}"></div>
+              <div class="form-group"><label>Log Channel ID <small style="color:#8892a4">(روم اللوق لهذا البانل)</small></label><input id="e_log_\${p.id}"></div>
             </div>
           </div>
           <button class="btn btn-primary" onclick="saveP('\${p.id}')">💾 حفظ</button>
@@ -674,7 +675,17 @@ app.get("/dashboard/reset", requireAuth, requireOwner, async (req, res) => {
 
 
 
-// Transcript
+// Transcript — عام بدون login (يُستخدم في DM والـ log)
+app.get("/transcript/:id", async (req, res) => {
+  try {
+    const r = await db.pool.query("SELECT * FROM closed_tickets WHERE id=$1", [req.params.id]);
+    const t = r.rows[0];
+    if (!t || !t.transcript) return res.send("<h2 style='font-family:sans-serif;text-align:center;margin-top:60px;color:#ed4245'>❌ لا يوجد transcript</h2>");
+    res.send(t.transcript);
+  } catch(e) { res.send("<h2>خطأ</h2>"); }
+});
+
+// Transcript — داخل الداشبورد (مع login)
 app.get("/dashboard/transcript/:id", requireAuth, async (req, res) => {
   try {
     const r = await db.pool.query("SELECT * FROM closed_tickets WHERE id=$1 AND license_key=$2", [req.params.id, req.licenseKey]);
