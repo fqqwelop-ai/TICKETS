@@ -584,7 +584,8 @@ app.get("/dashboard/settings", requireAuth, requireOwner, async (req, res) => {
         <div class="form-group"><label>Bot Token</label><input type="password" id="s_tok" value="${lic.bot_token||""}"></div>
         <div class="form-group"><label>Guild ID</label><input id="s_guild" value="${lic.guild_id||""}"></div>
         <div class="form-group"><label>Support Role ID</label><input id="s_role" value="${lic.support_role_id||""}"></div>
-        <div class="form-group"><label>Log Channel ID <small style="color:#8892a4">(روم اللوق)</small></label><input id="s_log" value="${lic.log_channel_id||""}"></div>
+        <div class="form-group"><label>Log Channel ID <small style="color:#8892a4">(روم اللوق — يُنشأ تلقائياً لو فارغ)</small></label><input id="s_log" value="${lic.log_channel_id||""}"></div>
+        <div class="form-group"><label>Closed Role ID <small style="color:#8892a4">(رتبة تشوف التيكتات المغلقة)</small></label><input id="s_closed" value="${lic.closed_role_id||""}"></div>
         <button class="btn btn-primary" onclick="saveBot()">💾 حفظ</button>
       </div>
       <div class="card">
@@ -616,7 +617,7 @@ app.get("/dashboard/settings", requireAuth, requireOwner, async (req, res) => {
     </div>
     <script>
     const g=id=>document.getElementById(id).value;
-    async function saveBot(){const r=await post('/api/settings/save',{bot_token:g('s_tok')||null,guild_id:g('s_guild')||null,support_role_id:g('s_role')||null,log_channel_id:g('s_log')||null});toast(r.ok?'✅ تم':'❌ '+r.error,r.ok)}
+    async function saveBot(){const r=await post('/api/settings/save',{bot_token:g('s_tok')||null,guild_id:g('s_guild')||null,support_role_id:g('s_role')||null,log_channel_id:g('s_log')||null,closed_role_id:g('s_closed')||null});toast(r.ok?'✅ تم':'❌ '+r.error,r.ok)}
     function addRole(){
       const div=document.createElement('div');
       div.className='card';div.style.cssText='background:#0d1117;margin-bottom:12px';
