@@ -147,10 +147,34 @@ ${msgs.map(m => `<div class="msg${m.author.bot?" bot":""}">
 // ─── Send Log ──────────────────────────────────────────────────────────────────
 async function sendCloseLog(guild, lic, ticket, closedBy, reason, transcriptId, dashUrl) {
   try {
-    const logChannelId = lic.log_channel_id;
-    if (!logChannelId) return;
-    const ch = await guild.channels.fetch(logChannelId).catch(() => null);
-    if (!ch) return;
+    let ch = null;
+
+    // حاول تجيب القناة الموجودة
+    if (lic.log_channel_id) {
+      ch = await guild.channels.fetch(lic.log_channel_id).catch(() => null);
+    }
+
+    // لو ما موجودة، أنشئ قناة اللوق تلقائياً
+    if (!ch) {
+      const { ChannelType, PermissionFlagsBits } = require("discord.js");
+      try {
+        ch = await guild.channels.create({
+          name: "ticket-logs",
+          type: ChannelType.GuildText,
+          permissionOverwrites: [
+            { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+            { id: guild.client.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
+            ...(lic.support_role_id ? [{ id: lic.support_role_id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory] }] : []),
+          ],
+        });
+        // احفظ الـ ID في DB
+        await require("./db.js").updateLicense(lic.license_key, { log_channel_id: ch.id });
+        lic.log_channel_id = ch.id;
+      } catch(e2) {
+        console.error("[Log Channel Create Error]", e2.message);
+        return;
+      }
+    }
 
     const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
     const embed = new EmbedBuilder()
@@ -304,7 +328,7 @@ async function handleCloseModal(interaction, lic) {
   }
 
   await interaction.editReply({ content: "🔒 جاري إغلاق التيكت..." });
-  setTimeout(() => interaction.channel.delete().catch(() => {}), 3000);
+  if (saved) await lockTicketChannel(interaction.channel, interaction.guild, lic, ticket, saved.id, dashUrl);
 }
 
 async function cmdCloseTicket(interaction, lic) {
@@ -329,7 +353,52 @@ async function cmdCloseTicket(interaction, lic) {
   }
 
   await interaction.reply({ content: `🔒 تم إغلاق التيكت بواسطة ${interaction.user} — السبب: ${reason}` });
-  setTimeout(() => interaction.channel.delete().catch(() => {}), 3000);
+  if (saved2) await lockTicketChannel(interaction.channel, interaction.guild, lic, ticket, saved2.id, dashUrl2);
+}
+
+// ─── Lock Ticket Channel (بعد الإغلاق) ───────────────────────────────────────
+async function lockTicketChannel(channel, guild, lic, ticket, transcriptId, dashUrl) {
+  try {
+    const { PermissionFlagsBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
+
+    // ١. إخفاء القناة عن الجميع إلا الرتبة المخصصة
+    const closedRoleId = lic.closed_role_id; // رتبة تشوف التيكتات المغلقة
+    await channel.permissionOverwrites.set([
+      { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+      { id: channel.client.user.id,  allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageChannels] },
+      ...(closedRoleId ? [{ id: closedRoleId, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory], deny: [PermissionFlagsBits.SendMessages] }] : []),
+    ]);
+
+    // تغيير اسم القناة
+    await channel.setName(`closed-${ticket.num}`).catch(() => {});
+
+    // ٢. إرسال رسالة مع رابط التيكت
+    const embed = new EmbedBuilder()
+      .setTitle(`📁 سجّل تيكت #${ticket.num}`)
+      .setDescription(`تم إغلاق هذا التيكت`)
+      .setColor(0x2b2d31)
+      .setTimestamp();
+
+    const components = [];
+    if (dashUrl && transcriptId) {
+      components.push(new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setLabel("📄 عرض المحادثة الكاملة")
+          .setURL(`${dashUrl}/dashboard/transcript/${transcriptId}`)
+          .setStyle(ButtonStyle.Link)
+      ));
+    }
+
+    await channel.send({ embeds: [embed], components });
+
+    // ٣. إنشاء أو إيجاد Log Channel وإرسال السجل فيه
+    await sendCloseLog(guild, lic, ticket, ticket.claimed_by || "—", "—", transcriptId, dashUrl);
+
+  } catch(e) {
+    console.error("[LockChannel Error]", e.message);
+    // في حال فشل أي شيء، احذف القناة
+    setTimeout(() => channel.delete().catch(() => {}), 5000);
+  }
 }
 
 // ─── Claim Ticket ──────────────────────────────────────────────────────────────
