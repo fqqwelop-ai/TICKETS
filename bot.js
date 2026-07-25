@@ -204,6 +204,7 @@ async function sendCloseLog(guild, lic, ticket, closedBy, reason, transcriptId, 
 // ─── DM على إغلاق التيكت ──────────────────────────────────────────────────────
 async function dmOnClose(client, ticket, reason, transcriptId, dashUrl) {
   try {
+    console.log("[DM Debug] dashUrl:", dashUrl, "| transcriptId:", transcriptId);
     const user = await client.users.fetch(ticket.user_id).catch(() => null);
     if (!user) return;
     const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
