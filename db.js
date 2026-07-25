@@ -59,6 +59,7 @@ async function initDB() {
     );
 
     ALTER TABLE licenses ADD COLUMN IF NOT EXISTS log_channel_id TEXT;
+    ALTER TABLE licenses ADD COLUMN IF NOT EXISTS closed_role_id TEXT;
 
     CREATE TABLE IF NOT EXISTS closed_tickets (
       id          SERIAL PRIMARY KEY,
