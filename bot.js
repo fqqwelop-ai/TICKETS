@@ -193,7 +193,7 @@ async function sendCloseLog(guild, lic, ticket, closedBy, reason, transcriptId, 
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setLabel("📄 عرض المحادثة الكاملة")
-        .setURL(dashUrl ? `${dashUrl}/dashboard/transcript/${transcriptId}` : "https://example.com")
+        .setURL(dashUrl && transcriptId ? `${dashUrl}/transcript/${transcriptId}` : "https://example.com")
         .setStyle(ButtonStyle.Link)
     );
 
@@ -326,13 +326,11 @@ async function handleCloseModal(interaction, lic) {
   await db.closeTicket(channelId);
 
   const dashUrl = lic.dashboard_url || "";
-  if (saved) {
-    await sendCloseLog(interaction.guild, lic, ticket, interaction.user.username, reason, saved.id, dashUrl);
-    await dmOnClose(interaction.client, ticket, reason, saved.id, dashUrl);
-  }
+  // DM فقط هنا — اللوق يُرسل داخل lockTicketChannel مع الرابط
+  if (saved) await dmOnClose(interaction.client, ticket, reason, saved.id, dashUrl);
 
   await interaction.editReply({ content: "🔒 جاري إغلاق التيكت..." });
-  if (saved) await lockTicketChannel(interaction.channel, interaction.guild, lic, ticket, saved.id, dashUrl);
+  if (saved) await lockTicketChannel(interaction.channel, interaction.guild, lic, ticket, saved.id, dashUrl, interaction.user.username, reason);
 }
 
 async function cmdCloseTicket(interaction, lic) {
@@ -351,17 +349,14 @@ async function cmdCloseTicket(interaction, lic) {
   await db.closeTicket(interaction.channelId);
 
   const dashUrl2 = lic.dashboard_url || "";
-  if (saved2) {
-    await sendCloseLog(interaction.guild, lic, ticket, interaction.user.username, reason, saved2.id, dashUrl2);
-    await dmOnClose(interaction.client, ticket, reason, saved2.id, dashUrl2);
-  }
+  if (saved2) await dmOnClose(interaction.client, ticket, reason, saved2.id, dashUrl2);
 
   await interaction.reply({ content: `🔒 تم إغلاق التيكت بواسطة ${interaction.user} — السبب: ${reason}` });
-  if (saved2) await lockTicketChannel(interaction.channel, interaction.guild, lic, ticket, saved2.id, dashUrl2);
+  if (saved2) await lockTicketChannel(interaction.channel, interaction.guild, lic, ticket, saved2.id, dashUrl2, interaction.user.username, reason);
 }
 
 // ─── Lock Ticket Channel (بعد الإغلاق) ───────────────────────────────────────
-async function lockTicketChannel(channel, guild, lic, ticket, transcriptId, dashUrl) {
+async function lockTicketChannel(channel, guild, lic, ticket, transcriptId, dashUrl, closedBy = "—", reason = "—") {
   try {
     const { PermissionFlagsBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
 
@@ -403,7 +398,7 @@ async function lockTicketChannel(channel, guild, lic, ticket, transcriptId, dash
     const licForLog = panel && panel.log_channel_id
       ? { ...lic, log_channel_id: panel.log_channel_id }
       : lic;
-    await sendCloseLog(guild, licForLog, ticket, ticket.claimed_by || "—", "—", transcriptId, dashUrl);
+    await sendCloseLog(guild, licForLog, ticket, closedBy, reason, transcriptId, dashUrl);
 
   } catch(e) {
     console.error("[LockChannel Error]", e.message);
