@@ -63,6 +63,7 @@ async function initDB() {
     ALTER TABLE licenses ADD COLUMN IF NOT EXISTS log_channel_id TEXT;
     ALTER TABLE licenses ADD COLUMN IF NOT EXISTS closed_role_id TEXT;
     ALTER TABLE licenses ADD COLUMN IF NOT EXISTS claim_message TEXT;
+    ALTER TABLE licenses ADD COLUMN IF NOT EXISTS claim_type TEXT DEFAULT 'channel';
     ALTER TABLE panels ADD COLUMN IF NOT EXISTS log_channel_id TEXT;
     ALTER TABLE panels ADD COLUMN IF NOT EXISTS start_counter INT DEFAULT 0;
 
@@ -125,12 +126,16 @@ async function getActiveTickets(licenseKey) {
   return r.rows;
 }
 async function nextTicketNum(licenseKey, panelId) {
-  // لو العداد 0 نبدأ من start_counter
+  // جلب البانل
   const check = await pool.query("SELECT counter, start_counter FROM panels WHERE license_key=$1 AND id=$2", [licenseKey, panelId]);
   const row = check.rows[0];
-  if (row && row.counter === 0 && row.start_counter > 0) {
+  if (!row) return 1;
+
+  // لو العداد الحالي أقل من start_counter → نضبطه على start_counter أولاً
+  if (row.start_counter > 0 && row.counter < row.start_counter) {
     await pool.query("UPDATE panels SET counter=$3 WHERE license_key=$1 AND id=$2", [licenseKey, panelId, row.start_counter]);
   }
+
   const r = await pool.query(
     "UPDATE panels SET counter=counter+1 WHERE license_key=$1 AND id=$2 RETURNING counter",
     [licenseKey, panelId]
