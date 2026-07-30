@@ -533,6 +533,7 @@ app.get("/dashboard/panels", requireAuth, async (req, res) => {
               <div class="form-group"><label>Category ID</label><input id="e_cat_\${p.id}"></div>
               <div class="form-group"><label>Support Role ID</label><input id="e_role_\${p.id}"></div>
               <div class="form-group"><label>Log Channel ID <small style="color:#8892a4">(روم اللوق لهذا البانل)</small></label><input id="e_log_\${p.id}"></div>
+              <div class="form-group"><label>بدء العداد من <small style="color:#8892a4">(0 = من البداية)</small></label><input type="number" id="e_sc_\${p.id}" min="0"></div>
             </div>
           </div>
           <button class="btn btn-primary" onclick="saveP('\${p.id}')">💾 حفظ</button>
@@ -586,6 +587,7 @@ app.get("/dashboard/settings", requireAuth, requireOwner, async (req, res) => {
         <div class="form-group"><label>Guild ID</label><input id="s_guild" value="${lic.guild_id||""}"></div>
         <div class="form-group"><label>Dashboard URL</label><input id="s_url" value="${lic.dashboard_url||""}" placeholder="https://ticketss.up.railway.app"></div>
         <div class="form-group"><label>Support Role ID</label><input id="s_role" value="${lic.support_role_id||""}"></div>
+        <div class="form-group"><label>رسالة الكلايم <small style="color:#8892a4">(تظهر عند كلايم التيكت)</small></label><input id="s_claim_msg" value="${lic.claim_message||""}" placeholder="✋ Ticket claimed by {claimer}"></div>
         <div class="form-group"><label>Log Channel ID <small style="color:#8892a4">(روم اللوق — يُنشأ تلقائياً لو فارغ)</small></label><input id="s_log" value="${lic.log_channel_id||""}"></div>
         <div class="form-group"><label>Closed Role ID <small style="color:#8892a4">(رتبة تشوف التيكتات المغلقة)</small></label><input id="s_closed" value="${lic.closed_role_id||""}"></div>
         <button class="btn btn-primary" onclick="saveBot()">💾 حفظ</button>
@@ -619,7 +621,7 @@ app.get("/dashboard/settings", requireAuth, requireOwner, async (req, res) => {
     </div>
     <script>
     const g=id=>document.getElementById(id).value;
-    async function saveBot(){const r=await post('/api/settings/save',{bot_token:g('s_tok')||null,guild_id:g('s_guild')||null,dashboard_url:g('s_url')||null,support_role_id:g('s_role')||null,log_channel_id:g('s_log')||null,closed_role_id:g('s_closed')||null});toast(r.ok?'✅ تم':'❌ '+r.error,r.ok)}
+    async function saveBot(){const r=await post('/api/settings/save',{bot_token:g('s_tok')||null,guild_id:g('s_guild')||null,dashboard_url:g('s_url')||null,support_role_id:g('s_role')||null,log_channel_id:g('s_log')||null,closed_role_id:g('s_closed')||null,claim_message:g('s_claim_msg')||null});toast(r.ok?'✅ تم':'❌ '+r.error,r.ok)}
     function addRole(){
       const div=document.createElement('div');
       div.className='card';div.style.cssText='background:#0d1117;margin-bottom:12px';
