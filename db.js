@@ -55,13 +55,16 @@ async function initDB() {
       category_id      TEXT,
       support_role_id  TEXT,
       log_channel_id   TEXT,
+      start_counter    INT  DEFAULT 0,
       counter          INT  DEFAULT 0,
       PRIMARY KEY (id, license_key)
     );
 
     ALTER TABLE licenses ADD COLUMN IF NOT EXISTS log_channel_id TEXT;
     ALTER TABLE licenses ADD COLUMN IF NOT EXISTS closed_role_id TEXT;
+    ALTER TABLE licenses ADD COLUMN IF NOT EXISTS claim_message TEXT;
     ALTER TABLE panels ADD COLUMN IF NOT EXISTS log_channel_id TEXT;
+    ALTER TABLE panels ADD COLUMN IF NOT EXISTS start_counter INT DEFAULT 0;
 
     CREATE TABLE IF NOT EXISTS closed_tickets (
       id          SERIAL PRIMARY KEY,
@@ -122,6 +125,12 @@ async function getActiveTickets(licenseKey) {
   return r.rows;
 }
 async function nextTicketNum(licenseKey, panelId) {
+  // لو العداد 0 نبدأ من start_counter
+  const check = await pool.query("SELECT counter, start_counter FROM panels WHERE license_key=$1 AND id=$2", [licenseKey, panelId]);
+  const row = check.rows[0];
+  if (row && row.counter === 0 && row.start_counter > 0) {
+    await pool.query("UPDATE panels SET counter=$3 WHERE license_key=$1 AND id=$2", [licenseKey, panelId, row.start_counter]);
+  }
   const r = await pool.query(
     "UPDATE panels SET counter=counter+1 WHERE license_key=$1 AND id=$2 RETURNING counter",
     [licenseKey, panelId]
@@ -140,13 +149,13 @@ async function getPanel(licenseKey, panelId) {
 }
 async function savePanel(licenseKey, p) {
   await pool.query(
-    `INSERT INTO panels (id, license_key, name, title, description, color, button_text, button_emoji, footer, welcome_title, welcome_desc, welcome_color, category_id, support_role_id, log_channel_id)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+    `INSERT INTO panels (id, license_key, name, title, description, color, button_text, button_emoji, footer, welcome_title, welcome_desc, welcome_color, category_id, support_role_id, log_channel_id, start_counter)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
      ON CONFLICT (id, license_key) DO UPDATE SET
        name=$3, title=$4, description=$5, color=$6, button_text=$7, button_emoji=$8,
-       footer=$9, welcome_title=$10, welcome_desc=$11, welcome_color=$12, category_id=$13, support_role_id=$14, log_channel_id=$15`,
+       footer=$9, welcome_title=$10, welcome_desc=$11, welcome_color=$12, category_id=$13, support_role_id=$14, log_channel_id=$15, start_counter=$16`,
     [p.id, licenseKey, p.name, p.title, p.description, p.color||"#5865f2", p.button_text||"فتح تيكت",
-     p.button_emoji||"🎫", p.footer, p.welcome_title, p.welcome_desc, p.welcome_color||"#57f287", p.category_id, p.support_role_id, p.log_channel_id||null]
+     p.button_emoji||"🎫", p.footer, p.welcome_title, p.welcome_desc, p.welcome_color||"#57f287", p.category_id, p.support_role_id, p.log_channel_id||null, parseInt(p.start_counter)||0]
   );
 }
 async function deletePanel(licenseKey, panelId) {
