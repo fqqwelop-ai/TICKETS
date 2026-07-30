@@ -443,11 +443,17 @@ async function handleClaimTicket(interaction, lic) {
   // كلايم جديد
   await db.claimTicket(interaction.channelId, interaction.user.username);
   // 1. اسم القناة: 🟡username-num
-  try { await interaction.channel.setName(`📌${interaction.user.username}-${ticket.num}`); } catch {}
-  const claimMsg = (lic.claim_message || "✋ Ticket claimed by {claimer}")
+  try { await interaction.channel.setName(`🟡${interaction.user.username}-${ticket.num}`); } catch {}
+  const claimMsg = (lic.claim_message || "📌 Ticket claimed by {claimer}")
     .replace(/\{claimer\}/g, `${interaction.user}`)
     .replace(/\{username\}/g, interaction.user.username);
-  await interaction.reply({ content: claimMsg });
+  // إرسال الرسالة حسب الإعداد
+  if (lic.claim_type === 'dm') {
+    await interaction.reply({ content: claimMsg, flags: 64 }); // dismiss message
+  } else {
+    await interaction.channel.send({ content: claimMsg });
+    await interaction.reply({ content: "✅", flags: 64 });
+  }
 
   // 3. بعد 6 ثواني يُسمح بالـ unclaim
   const t = setTimeout(() => claimCooldown.delete(interaction.channelId), 6000);
