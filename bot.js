@@ -285,7 +285,7 @@ async function handleOpenTicket(interaction, lic, panelId) {
     .setDescription(desc)
     .setColor(color)
     .addFields(
-      { name: "📋 الباقل", value: panel.name || panelId, inline: true },
+      { name: "📋 البانل", value: panel.name || panelId, inline: true },
       { name: "🔢 رقم التيكت", value: `#${num}`, inline: true },
       { name: "👤 فاتح التيكت", value: `<@${userId}>`, inline: true },
       { name: "🕐 وقت الفتح", value: `<t:${Math.floor(Date.now()/1000)}:F>`, inline: true },
@@ -330,7 +330,7 @@ async function handleCloseModal(interaction, lic) {
   // DM فقط هنا — اللوق يُرسل داخل lockTicketChannel مع الرابط
   if (saved) await dmOnClose(interaction.client, ticket, reason, saved.id, dashUrl);
 
-  await interaction.editReply({ content: "🔒 جاري إغلاق التيكت..." });
+  await interaction.editReply({ content: "🔒 Closing ticket..." });
   if (saved) await lockTicketChannel(interaction.channel, interaction.guild, lic, ticket, saved.id, dashUrl, interaction.user.username, reason);
 }
 
@@ -352,7 +352,7 @@ async function cmdCloseTicket(interaction, lic) {
   const dashUrl2 = lic.dashboard_url || "";
   if (saved2) await dmOnClose(interaction.client, ticket, reason, saved2.id, dashUrl2);
 
-  await interaction.reply({ content: `🔒 تم إغلاق التيكت بواسطة ${interaction.user} — السبب: ${reason}` });
+  await interaction.reply({ content: `🔒 Ticket closed by ${interaction.user} — Reason: ${reason}` });
   if (saved2) await lockTicketChannel(interaction.channel, interaction.guild, lic, ticket, saved2.id, dashUrl2, interaction.user.username, reason);
 }
 
@@ -416,6 +416,14 @@ async function handleClaimTicket(interaction, lic) {
   const ticket = await db.getTicket(interaction.channelId);
   if (!ticket) return interaction.reply({ content: "❌ غير موجود", flags: 64 });
 
+  // تحقق إن المستخدم عنده Support Role
+  const supportRoleId = ticket.support_role_id || lic.support_role_id;
+  const member = interaction.member;
+  const hasSupport = !supportRoleId
+    || member.roles.cache.has(supportRoleId)
+    || member.permissions.has("Administrator");
+  if (!hasSupport) return interaction.reply({ content: "❌ Only support staff can claim tickets", flags: 64 });
+
   const existing = claimCooldown.get(interaction.channelId);
 
   // 4. لو عنده كلايم مسبق من نفس اليوزر → تجاهل
@@ -435,8 +443,11 @@ async function handleClaimTicket(interaction, lic) {
   // كلايم جديد
   await db.claimTicket(interaction.channelId, interaction.user.username);
   // 1. اسم القناة: 🟡username-num
-  try { await interaction.channel.setName(`🟡${interaction.user.username}-${ticket.num}`); } catch {}
-  await interaction.reply({ content: `✋ تم كلايم التيكت بواسطة ${interaction.user}` });
+  try { await interaction.channel.setName(`📌${interaction.user.username}-${ticket.num}`); } catch {}
+  const claimMsg = (lic.claim_message || "✋ Ticket claimed by {claimer}")
+    .replace(/\{claimer\}/g, `${interaction.user}`)
+    .replace(/\{username\}/g, interaction.user.username);
+  await interaction.reply({ content: claimMsg });
 
   // 3. بعد 6 ثواني يُسمح بالـ unclaim
   const t = setTimeout(() => claimCooldown.delete(interaction.channelId), 6000);
