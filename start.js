@@ -11,4 +11,4 @@ async function main() {
   setTimeout(() => require("./bot.js"), 2000);
 }
 
-main().catch(e => console.error("[Startup Error]", e.message));
+main().catch(e => console.error("[Startup Error]", e));
