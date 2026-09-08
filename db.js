@@ -72,6 +72,7 @@ async function initDB() {
     ALTER TABLE panels ADD COLUMN IF NOT EXISTS log_channel_id TEXT;
     ALTER TABLE panels ADD COLUMN IF NOT EXISTS start_counter INT DEFAULT 0;
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS scheduled_close_at TIMESTAMPTZ;
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS claimed_by_id TEXT;
 
     CREATE TABLE IF NOT EXISTS closed_tickets (
       id          SERIAL PRIMARY KEY,
@@ -126,7 +127,7 @@ async function getOpenTicket(licenseKey, userId, panelId) {
   return r.rows[0];
 }
 async function closeTicket(channelId) { await pool.query("UPDATE tickets SET closed=TRUE WHERE channel_id=$1", [channelId]); }
-async function claimTicket(channelId, userId) { await pool.query("UPDATE tickets SET claimed_by=$2 WHERE channel_id=$1", [channelId, userId]); }
+async function claimTicket(channelId, userId, discordId) { await pool.query("UPDATE tickets SET claimed_by=$2, claimed_by_id=$3 WHERE channel_id=$1", [channelId, userId, discordId || null]); }
 async function getActiveTickets(licenseKey) {
   const r = await pool.query("SELECT * FROM tickets WHERE license_key=$1 AND closed=FALSE ORDER BY created_at DESC", [licenseKey]);
   return r.rows;
