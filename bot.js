@@ -2,10 +2,31 @@ const {
   Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder,
   ButtonStyle, EmbedBuilder, ChannelType, PermissionFlagsBits,
   SlashCommandBuilder, ModalBuilder, TextInputBuilder, TextInputStyle,
-  REST, Routes,
+  StringSelectMenuBuilder, REST, Routes,
 } = require("discord.js");
 
 const db = require("./db.js");
+
+// ─── إعدادات افتراضية لخيارات الإغلاق التلقائي ─────────────────────────────────
+const DEFAULT_CLOSE_DURATIONS = [
+  { label: "15 دقيقة", minutes: 15 },
+  { label: "30 دقيقة", minutes: 30 },
+  { label: "ساعة", minutes: 60 },
+  { label: "ساعتين", minutes: 120 },
+  { label: "3 ساعات", minutes: 180 },
+  { label: "يوم", minutes: 1440 },
+  { label: "يومين", minutes: 2880 },
+];
+
+// تبريد للتذكيرات عشان محد يسبح الإداريين/الأعضاء برسائل
+const reminderCooldown = new Map(); // key → timestamp
+function checkCooldown(key, ms) {
+  const last = reminderCooldown.get(key);
+  const now = Date.now();
+  if (last && now - last < ms) return false;
+  reminderCooldown.set(key, now);
+  return true;
+}
 
 // ─── Bot Manager ───────────────────────────────────────────────────────────────
 class BotManager {
@@ -83,6 +104,13 @@ async function handleInteraction(interaction, lic) {
       if (action === "claim_ticket")  await handleClaimTicket(interaction, lic);
       if (action === "confirm_close") await handleConfirmClose(interaction, lic);
       if (action === "delete_ticket") await handleDeleteTicket(interaction, lic);
+      if (action === "schedule_close") await handleScheduleCloseMenu(interaction, lic);
+      if (action === "remind_admin")  await handleRemindAdmin(interaction, lic);
+      if (action === "remind_player") await handleRemindPlayer(interaction, lic);
+    }
+
+    if (interaction.isStringSelectMenu()) {
+      if (interaction.customId === "close_duration_select") await handleCloseDurationSelect(interaction, lic);
     }
 
     if (interaction.isModalSubmit()) {
@@ -295,8 +323,13 @@ async function handleOpenTicket(interaction, lic, panelId) {
     new ButtonBuilder().setCustomId("close_ticket").setLabel("إغلاق التيكت").setEmoji("🔒").setStyle(ButtonStyle.Danger),
     new ButtonBuilder().setCustomId("claim_ticket").setLabel("كلايم التيكت").setEmoji("✋").setStyle(ButtonStyle.Secondary),
   );
+  const row2 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("schedule_close").setLabel("⏰ جدولة إغلاق").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("remind_admin").setLabel(lic.admin_reminder_label || "🔔 تذكير الإداري").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("remind_player").setLabel(lic.player_reminder_label || "🔔 تذكير العضو").setStyle(ButtonStyle.Secondary),
+  );
 
-  await channel.send({ content: roleId ? `<@&${roleId}>` : `<@${userId}>`, embeds: [embed], components: [row] });
+  await channel.send({ content: roleId ? `<@&${roleId}>` : `<@${userId}>`, embeds: [embed], components: [row, row2] });
   await interaction.editReply({ content: `✅ تم فتح تيكتك: ${channel}` });
 }
 
@@ -507,6 +540,147 @@ async function cmdSendPanel(interaction, lic) {
   await interaction.channel.send({ embeds: [embed], components: [row] });
 }
 
+// ─── جدولة الإغلاق التلقائي ─────────────────────────────────────────────────────
+async function handleScheduleCloseMenu(interaction, lic) {
+  const ticket = await db.getTicket(interaction.channelId);
+  if (!ticket) return interaction.reply({ content: "❌ غير موجود", flags: 64 });
+
+  const supportRoleId = ticket.support_role_id || lic.support_role_id;
+  const member = interaction.member;
+  const hasSupport = !supportRoleId
+    || member.roles.cache.has(supportRoleId)
+    || member.permissions.has("Administrator");
+  if (!hasSupport) return interaction.reply({ content: "❌ لفريق الدعم فقط", flags: 64 });
+
+  let options;
+  try { options = JSON.parse(lic.close_duration_options || "[]"); } catch { options = []; }
+  if (!Array.isArray(options) || !options.length) options = DEFAULT_CLOSE_DURATIONS;
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("close_duration_select")
+    .setPlaceholder("اختر بعد كم مدة تُغلق التذكرة تلقائياً")
+    .addOptions([
+      { label: "❌ إلغاء أي جدولة إغلاق", value: "cancel" },
+      ...options.slice(0, 24).map(o => ({ label: o.label, value: String(o.minutes) })),
+    ]);
+
+  const row = new ActionRowBuilder().addComponents(menu);
+  await interaction.reply({ content: "⏰ اختر بعد كم مدة تُغلق هذه التذكرة تلقائياً:", components: [row], flags: 64 });
+}
+
+async function handleCloseDurationSelect(interaction, lic) {
+  const value = interaction.values[0];
+  if (value === "cancel") {
+    await db.clearScheduledClose(interaction.channelId);
+    return interaction.update({ content: "✅ تم إلغاء الإغلاق التلقائي لهذه التذكرة", components: [] });
+  }
+  const minutes = parseInt(value, 10);
+  if (!minutes) return interaction.update({ content: "❌ حصل خطأ", components: [] });
+
+  const closeAt = new Date(Date.now() + minutes * 60000);
+  await db.scheduleTicketClose(interaction.channelId, closeAt);
+  const ts = Math.floor(closeAt.getTime() / 1000);
+  await interaction.update({ content: `✅ تم جدولة إغلاق التذكرة تلقائياً <t:${ts}:R>`, components: [] });
+  await interaction.channel.send({ content: `⏰ سيتم إغلاق هذه التذكرة تلقائياً <t:${ts}:R> ما لم يتم إلغاء الجدولة.` }).catch(() => {});
+}
+
+// ─── تذكير الإداري ──────────────────────────────────────────────────────────────
+async function handleRemindAdmin(interaction, lic) {
+  const ticket = await db.getTicket(interaction.channelId);
+  if (!ticket) return interaction.reply({ content: "❌ غير موجود", flags: 64 });
+
+  if (!checkCooldown(`admin:${interaction.channelId}`, 2 * 60 * 1000)) {
+    return interaction.reply({ content: "⏳ تم إرسال تذكير قبل قليل، حاول بعد دقيقتين", flags: 64 });
+  }
+
+  const supportRoleId = ticket.support_role_id || lic.support_role_id;
+  if (!supportRoleId) return interaction.reply({ content: "❌ ما فيه رتبة دعم محددة", flags: 64 });
+
+  await interaction.deferReply({ flags: 64 });
+  const role = await interaction.guild.roles.fetch(supportRoleId).catch(() => null);
+  const msg  = lic.admin_reminder_message || "🔔 تذكير: هذه التذكرة تحتاج ردكم";
+  let sent = 0;
+  if (role) {
+    for (const [, m] of role.members) {
+      if (m.user.bot) continue;
+      try { await m.send(`${msg}\nالقناة: ${interaction.channel}`); sent++; } catch {}
+    }
+  }
+  await interaction.editReply({ content: sent ? "✅ تم إرسال التذكير للإداريين" : "❌ ما قدرنا نوصل التذكير (تأكد الخاص مفتوح عند الإداريين)" });
+}
+
+// ─── تذكير العضو ────────────────────────────────────────────────────────────────
+async function handleRemindPlayer(interaction, lic) {
+  const ticket = await db.getTicket(interaction.channelId);
+  if (!ticket) return interaction.reply({ content: "❌ غير موجود", flags: 64 });
+
+  const supportRoleId = ticket.support_role_id || lic.support_role_id;
+  const member = interaction.member;
+  const hasSupport = !supportRoleId
+    || member.roles.cache.has(supportRoleId)
+    || member.permissions.has("Administrator");
+  if (!hasSupport) return interaction.reply({ content: "❌ لفريق الدعم فقط", flags: 64 });
+
+  if (!checkCooldown(`player:${interaction.channelId}`, 2 * 60 * 1000)) {
+    return interaction.reply({ content: "⏳ تم إرسال تذكير قبل قليل، حاول بعد دقيقتين", flags: 64 });
+  }
+
+  await interaction.deferReply({ flags: 64 });
+  const user = await interaction.client.users.fetch(ticket.user_id).catch(() => null);
+  const msg  = lic.player_reminder_message || "🔔 تذكير: الرجاء الرد على تذكرتك";
+  if (!user) return interaction.editReply({ content: "❌ ما قدرنا نلقى العضو" });
+  try {
+    await user.send(`${msg}\nالقناة: ${interaction.channel}`);
+    await interaction.editReply({ content: "✅ تم إرسال التذكير للعضو" });
+  } catch {
+    await interaction.editReply({ content: "❌ ما قدرنا نوصل الخاص للعضو (خاصه مقفول)" });
+  }
+}
+
+// ─── منفّذ الإغلاق التلقائي المجدول ──────────────────────────────────────────────
+async function autoCloseTicket(client, ticket) {
+  try {
+    const guild = await client.guilds.fetch(ticket.guild_id).catch(() => null);
+    if (!guild) return;
+    const channel = await guild.channels.fetch(ticket.channel_id).catch(() => null);
+    if (!channel) { await db.closeTicket(ticket.channel_id); return; }
+
+    const lic = await db.getLicense(ticket.license_key);
+    if (!lic) return;
+
+    const messages  = await channel.messages.fetch({ limit: 100 }).catch(() => new Map());
+    const transcript = buildTranscriptHTML(ticket, messages, lic.dashboard_url || "");
+    const reason = "انتهت مدة الإغلاق التلقائي المجدولة";
+
+    const saved = await db.saveClosedTicketReturn({
+      licenseKey: lic.license_key, channelId: ticket.channel_id, userId: ticket.user_id,
+      username: ticket.username, panelId: ticket.panel_id, num: ticket.num,
+      closedBy: "⏰ إغلاق تلقائي", reason, transcript,
+    });
+    await db.closeTicket(ticket.channel_id);
+
+    const dashUrl = lic.dashboard_url || "";
+    if (saved) await dmOnClose(client, ticket, reason, saved.id, dashUrl);
+    if (saved) await lockTicketChannel(channel, guild, lic, ticket, saved.id, dashUrl, "⏰ إغلاق تلقائي", reason);
+  } catch (e) {
+    console.error("[AutoClose Error]", e.message);
+  }
+}
+
+function startAutoCloseScheduler() {
+  setInterval(async () => {
+    try {
+      const due = await db.getDueTickets();
+      for (const ticket of due) {
+        const client = botManager.getBot(ticket.license_key);
+        if (!client) continue;
+        await db.clearScheduledClose(ticket.channel_id);
+        await autoCloseTicket(client, ticket);
+      }
+    } catch (e) { console.error("[Scheduler Error]", e.message); }
+  }, 60 * 1000);
+}
+
 // ─── Add User ──────────────────────────────────────────────────────────────────
 async function cmdAddUser(interaction, lic) {
   const ticket = await db.getTicket(interaction.channelId);
@@ -520,5 +694,6 @@ async function cmdAddUser(interaction, lic) {
 
 // ─── Start ─────────────────────────────────────────────────────────────────────
 botManager.startAll().catch(e => console.error("[BotManager]", e.message));
+startAutoCloseScheduler();
 
 module.exports = { botManager };
