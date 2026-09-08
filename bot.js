@@ -59,6 +59,7 @@ class BotManager {
     });
 
     client.on("interactionCreate", interaction => handleInteraction(interaction, lic));
+    client.on("messageCreate", message => handleTicketReply(message));
 
     await client.login(lic.bot_token);
     this.bots.set(lic.license_key, client);
@@ -104,18 +105,18 @@ async function handleInteraction(interaction, lic) {
       if (action === "claim_ticket")  await handleClaimTicket(interaction, lic);
       if (action === "confirm_close") await handleConfirmClose(interaction, lic);
       if (action === "delete_ticket") await handleDeleteTicket(interaction, lic);
-      if (action === "schedule_close") await handleScheduleCloseMenu(interaction, lic);
+      if (action === "close_dur")     await handleCloseDurButton(interaction, lic, rest[0]);
+      if (action === "close_dur_custom") await handleCloseCustomButton(interaction);
       if (action === "remind_admin")  await handleRemindAdmin(interaction, lic);
       if (action === "remind_player") await handleRemindPlayer(interaction, lic);
-    }
-
-    if (interaction.isStringSelectMenu()) {
-      if (interaction.customId === "close_duration_select") await handleCloseDurationSelect(interaction, lic);
     }
 
     if (interaction.isModalSubmit()) {
       if (interaction.customId.startsWith("close_reason:")) {
         await handleCloseModal(interaction, lic);
+      }
+      if (interaction.customId.startsWith("close_custom:")) {
+        await handleCloseCustomSubmit(interaction);
       }
     }
 
@@ -323,13 +324,8 @@ async function handleOpenTicket(interaction, lic, panelId) {
     new ButtonBuilder().setCustomId("close_ticket").setLabel("إغلاق التيكت").setEmoji("🔒").setStyle(ButtonStyle.Danger),
     new ButtonBuilder().setCustomId("claim_ticket").setLabel("كلايم التيكت").setEmoji("✋").setStyle(ButtonStyle.Secondary),
   );
-  const row2 = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId("schedule_close").setLabel("⏰ جدولة إغلاق").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("remind_admin").setLabel(lic.admin_reminder_label || "🔔 تذكير الإداري").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("remind_player").setLabel(lic.player_reminder_label || "🔔 تذكير العضو").setStyle(ButtonStyle.Secondary),
-  );
 
-  await channel.send({ content: roleId ? `<@&${roleId}>` : `<@${userId}>`, embeds: [embed], components: [row, row2] });
+  await channel.send({ content: roleId ? `<@&${roleId}>` : `<@${userId}>`, embeds: [embed], components: [row] });
   await interaction.editReply({ content: `✅ تم فتح تيكتك: ${channel}` });
 }
 
@@ -474,7 +470,7 @@ async function handleClaimTicket(interaction, lic) {
   }
 
   // كلايم جديد
-  await db.claimTicket(interaction.channelId, interaction.user.username);
+  await db.claimTicket(interaction.channelId, interaction.user.username, interaction.user.id);
   // 1. اسم القناة: 🟡username-num
   try { await interaction.channel.setName(`🟡${interaction.user.username}-${ticket.num}`); } catch {}
   const claimMsg = (lic.claim_message || "📌 Ticket claimed by {claimer}")
@@ -487,6 +483,9 @@ async function handleClaimTicket(interaction, lic) {
     await interaction.channel.send({ content: claimMsg });
     await interaction.reply({ content: "✅", flags: 64 });
   }
+
+  // لوحة الإغلاق التلقائي + التذكيرات تطلع تلقائياً بعد الكلايم (تظهر للمويظف اللي كلايم بس)
+  await sendPostClaimPanel(interaction, lic, ticket);
 
   // 3. بعد 6 ثواني يُسمح بالـ unclaim
   const t = setTimeout(() => claimCooldown.delete(interaction.channelId), 6000);
@@ -540,48 +539,87 @@ async function cmdSendPanel(interaction, lic) {
   await interaction.channel.send({ embeds: [embed], components: [row] });
 }
 
-// ─── جدولة الإغلاق التلقائي ─────────────────────────────────────────────────────
-async function handleScheduleCloseMenu(interaction, lic) {
-  const ticket = await db.getTicket(interaction.channelId);
-  if (!ticket) return interaction.reply({ content: "❌ غير موجود", flags: 64 });
+// ─── إلغاء الإغلاق التلقائي تلقائياً لو رد العضو ────────────────────────────────
+async function handleTicketReply(message) {
+  try {
+    if (message.author.bot || !message.guild) return;
+    const ticket = await db.getTicket(message.channel.id);
+    if (!ticket || ticket.closed) return;
+    if (message.author.id !== ticket.user_id) return;
+    if (!ticket.scheduled_close_at) return;
+    if (new Date(ticket.scheduled_close_at).getTime() <= Date.now()) return; // خلاص فات وقتها، خله يتكفل بها المجدول
 
-  const supportRoleId = ticket.support_role_id || lic.support_role_id;
-  const member = interaction.member;
-  const hasSupport = !supportRoleId
-    || member.roles.cache.has(supportRoleId)
-    || member.permissions.has("Administrator");
-  if (!hasSupport) return interaction.reply({ content: "❌ لفريق الدعم فقط", flags: 64 });
+    await db.clearScheduledClose(message.channel.id);
+    await message.channel.send({ content: "✅ تم إلغاء الإغلاق التلقائي لأن العضو رد." }).catch(() => {});
+    if (ticket.claimed_by_id) {
+      const staff = await message.client.users.fetch(ticket.claimed_by_id).catch(() => null);
+      if (staff) await staff.send(`✅ رد العضو <@${ticket.user_id}> بتذكرة #${ticket.num}، تم إلغاء الإغلاق التلقائي المجدول.`).catch(() => {});
+    }
+  } catch (e) {
+    console.error("[AutoCancel Error]", e.message);
+  }
+}
 
+// ─── لوحة ما بعد الكلايم (إغلاق تلقائي + تذكيرات) ───────────────────────────────
+async function sendPostClaimPanel(interaction, lic, ticket) {
   let options;
   try { options = JSON.parse(lic.close_duration_options || "[]"); } catch { options = []; }
   if (!Array.isArray(options) || !options.length) options = DEFAULT_CLOSE_DURATIONS;
+  options = options.slice(0, 8);
 
-  const menu = new StringSelectMenuBuilder()
-    .setCustomId("close_duration_select")
-    .setPlaceholder("اختر بعد كم مدة تُغلق التذكرة تلقائياً")
-    .addOptions([
-      { label: "❌ إلغاء أي جدولة إغلاق", value: "cancel" },
-      ...options.slice(0, 24).map(o => ({ label: o.label, value: String(o.minutes) })),
-    ]);
+  const embed = new EmbedBuilder()
+    .setTitle("⏰ الإغلاق التلقائي المؤقت")
+    .setColor(0xf59e0b)
+    .setDescription("اختر مدة من الأزرار تحت.\nلو رد العضو قبل ما تنتهي المدة، يتم إلغاء المؤقت وتوصلك رسالة خاصة.")
+    .addFields(
+      { name: "Ticket", value: `#${ticket.num}`, inline: true },
+      { name: "Player", value: `<@${ticket.user_id}>`, inline: true },
+    );
 
-  const row = new ActionRowBuilder().addComponents(menu);
-  await interaction.reply({ content: "⏰ اختر بعد كم مدة تُغلق هذه التذكرة تلقائياً:", components: [row], flags: 64 });
+  const durBtns = options.map(o =>
+    new ButtonBuilder().setCustomId(`close_dur:${o.minutes}`).setLabel(o.label).setStyle(ButtonStyle.Secondary)
+  );
+  durBtns.push(new ButtonBuilder().setCustomId("close_dur_custom").setLabel("✏️ مخصص").setStyle(ButtonStyle.Primary));
+
+  const rows = [];
+  for (let i = 0; i < durBtns.length; i += 5) rows.push(new ActionRowBuilder().addComponents(durBtns.slice(i, i + 5)));
+
+  rows.push(new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("remind_admin").setLabel(lic.admin_reminder_label || "🔔 تذكير الإداري").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("remind_player").setLabel(lic.player_reminder_label || "🔔 تذكير العضو").setStyle(ButtonStyle.Secondary),
+  ));
+
+  await interaction.followUp({ embeds: [embed], components: rows.slice(0, 5), flags: 64 });
 }
 
-async function handleCloseDurationSelect(interaction, lic) {
-  const value = interaction.values[0];
-  if (value === "cancel") {
-    await db.clearScheduledClose(interaction.channelId);
-    return interaction.update({ content: "✅ تم إلغاء الإغلاق التلقائي لهذه التذكرة", components: [] });
-  }
-  const minutes = parseInt(value, 10);
-  if (!minutes) return interaction.update({ content: "❌ حصل خطأ", components: [] });
-
+async function handleCloseDurButton(interaction, lic, minutesStr) {
+  const minutes = parseInt(minutesStr, 10);
+  if (!minutes) return interaction.reply({ content: "❌ خطأ", flags: 64 });
   const closeAt = new Date(Date.now() + minutes * 60000);
   await db.scheduleTicketClose(interaction.channelId, closeAt);
   const ts = Math.floor(closeAt.getTime() / 1000);
-  await interaction.update({ content: `✅ تم جدولة إغلاق التذكرة تلقائياً <t:${ts}:R>`, components: [] });
-  await interaction.channel.send({ content: `⏰ سيتم إغلاق هذه التذكرة تلقائياً <t:${ts}:R> ما لم يتم إلغاء الجدولة.` }).catch(() => {});
+  await interaction.reply({ content: `✅ تم جدولة إغلاق التذكرة تلقائياً <t:${ts}:R>`, flags: 64 });
+  await interaction.channel.send({ content: `⏰ سيتم إغلاق هذه التذكرة تلقائياً <t:${ts}:R> ما لم يرد العضو أو يتم إلغاء الجدولة.` }).catch(() => {});
+}
+
+async function handleCloseCustomButton(interaction) {
+  const modal = new ModalBuilder().setCustomId(`close_custom:${interaction.channelId}`).setTitle("مدة مخصصة");
+  modal.addComponents(new ActionRowBuilder().addComponents(
+    new TextInputBuilder().setCustomId("minutes").setLabel("المدة بالدقائق").setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder("مثال: 90")
+  ));
+  await interaction.showModal(modal);
+}
+
+async function handleCloseCustomSubmit(interaction) {
+  const channelId = interaction.customId.split(":")[1];
+  const minutes = parseInt(interaction.fields.getTextInputValue("minutes"), 10);
+  if (!minutes || minutes <= 0) return interaction.reply({ content: "❌ رقم غير صحيح", flags: 64 });
+  const closeAt = new Date(Date.now() + minutes * 60000);
+  await db.scheduleTicketClose(channelId, closeAt);
+  const ts = Math.floor(closeAt.getTime() / 1000);
+  await interaction.reply({ content: `✅ تم جدولة إغلاق التذكرة تلقائياً <t:${ts}:R>`, flags: 64 });
+  const ch = await interaction.client.channels.fetch(channelId).catch(() => null);
+  if (ch) await ch.send({ content: `⏰ سيتم إغلاق هذه التذكرة تلقائياً <t:${ts}:R> ما لم يرد العضو أو يتم إلغاء الجدولة.` }).catch(() => {});
 }
 
 // ─── تذكير الإداري ──────────────────────────────────────────────────────────────
