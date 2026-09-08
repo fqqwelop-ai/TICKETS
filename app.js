@@ -242,6 +242,27 @@ app.get("/admin/licenses/:key", requireAdmin, async (req, res) => {
         <button class="btn btn-primary" onclick="saveBotConf()">💾 حفظ</button>
       </div>
     </div>
+    <div class="card">
+      <div class="card-title">⏰ الإغلاق التلقائي والتذكيرات</div>
+      <div class="form-group">
+        <label>خيارات مدة الإغلاق التلقائي (سطر لكل خيار بصيغة: الاسم,الدقائق)</label>
+        <textarea id="e_close_opts" rows="7" style="width:100%;font-family:monospace;background:#0d1117;color:#e2e8f0;border:1px solid #2d3148;border-radius:8px;padding:10px">${(() => {
+          let arr; try { arr = JSON.parse(lic.close_duration_options || "[]"); } catch { arr = []; }
+          if (!Array.isArray(arr) || !arr.length) arr = [
+            {label:"15 دقيقة",minutes:15},{label:"30 دقيقة",minutes:30},{label:"ساعة",minutes:60},
+            {label:"ساعتين",minutes:120},{label:"3 ساعات",minutes:180},{label:"يوم",minutes:1440},{label:"يومين",minutes:2880},
+          ];
+          return arr.map(o => `${o.label},${o.minutes}`).join("\n");
+        })()}</textarea>
+      </div>
+      <div class="grid-2">
+        <div class="form-group"><label>نص زر تذكير الإداري</label><input id="e_admin_label" value="${lic.admin_reminder_label||"🔔 تذكير الإداري"}"></div>
+        <div class="form-group"><label>نص زر تذكير العضو</label><input id="e_player_label" value="${lic.player_reminder_label||"🔔 تذكير العضو"}"></div>
+      </div>
+      <div class="form-group"><label>رسالة تذكير الإداري (تُرسل خاص)</label><input id="e_admin_msg" value="${lic.admin_reminder_message||"🔔 تذكير: هذه التذكرة تحتاج ردكم"}"></div>
+      <div class="form-group"><label>رسالة تذكير العضو (تُرسل خاص)</label><input id="e_player_msg" value="${lic.player_reminder_message||"🔔 تذكير: الرجاء الرد على تذكرتك"}"></div>
+      <button class="btn btn-primary" onclick="saveReminders()">💾 حفظ</button>
+    </div>
     <div class="card" style="border-color:#ed424533">
       <div class="card-title" style="color:#ed4245">⚠️ إجراءات</div>
       <div style="display:flex;gap:10px;flex-wrap:wrap">
@@ -254,6 +275,13 @@ app.get("/admin/licenses/:key", requireAdmin, async (req, res) => {
     const g=id=>document.getElementById(id).value;
     async function saveInfo(){const r=await post('/admin/api/licenses/update',{license_key:KEY,client_name:g('e_name'),username:g('e_user'),password:g('e_pass')||null,max_servers:parseInt(g('e_srv'))||1,expires_at:g('e_exp')||null});toast(r.ok?'✅ تم':'❌ '+r.error,r.ok)}
     async function saveBotConf(){const r=await post('/admin/api/licenses/update',{license_key:KEY,bot_token:g('e_tok')||null,guild_id:g('e_guild')||null,client_id:g('e_cid')||null,client_secret:g('e_csec')||null,dashboard_url:g('e_url')||null,support_role_id:g('e_role')||null,discord_id:g('e_did')||null});toast(r.ok?'✅ تم':'❌ '+r.error,r.ok)}
+    async function saveReminders(){
+      const lines=g('e_close_opts').split('\n').map(l=>l.trim()).filter(Boolean);
+      const opts=lines.map(l=>{const [label,minutes]=l.split(',');return {label:(label||'').trim(),minutes:parseInt((minutes||'').trim())||0}}).filter(o=>o.label&&o.minutes>0);
+      if(!opts.length){toast('❌ لازم خيار واحد على الأقل بصيغة صحيحة (مثال: ساعة,60)',false);return}
+      const r=await post('/admin/api/licenses/update',{license_key:KEY,close_duration_options:JSON.stringify(opts),admin_reminder_label:g('e_admin_label')||null,player_reminder_label:g('e_player_label')||null,admin_reminder_message:g('e_admin_msg')||null,player_reminder_message:g('e_player_msg')||null});
+      toast(r.ok?'✅ تم':'❌ '+r.error,r.ok);
+    }
     async function toggle(active){const r=await post('/admin/api/licenses/toggle',{license_key:KEY,active:!active});toast(r.ok?'✅ تم':'❌ '+r.error,r.ok);if(r.ok)setTimeout(()=>location.reload(),800)}
     async function del(){if(!confirm('حذف هذا اللايسنس؟'))return;const r=await post('/admin/api/licenses/delete',{license_key:KEY});if(r.ok)location.href='/admin/licenses';else toast('❌ '+r.error,false)}
     </script>
@@ -533,7 +561,6 @@ app.get("/dashboard/panels", requireAuth, async (req, res) => {
               <div class="form-group"><label>Category ID</label><input id="e_cat_\${p.id}"></div>
               <div class="form-group"><label>Support Role ID</label><input id="e_role_\${p.id}"></div>
               <div class="form-group"><label>Log Channel ID <small style="color:#8892a4">(روم اللوق لهذا البانل)</small></label><input id="e_log_\${p.id}"></div>
-              <div class="form-group"><label>بدء العداد من <small style="color:#8892a4">(0 = من البداية)</small></label><input type="number" id="e_sc_\${p.id}" min="0"></div>
             </div>
           </div>
           <button class="btn btn-primary" onclick="saveP('\${p.id}')">💾 حفظ</button>
@@ -587,13 +614,6 @@ app.get("/dashboard/settings", requireAuth, requireOwner, async (req, res) => {
         <div class="form-group"><label>Guild ID</label><input id="s_guild" value="${lic.guild_id||""}"></div>
         <div class="form-group"><label>Dashboard URL</label><input id="s_url" value="${lic.dashboard_url||""}" placeholder="https://ticketss.up.railway.app"></div>
         <div class="form-group"><label>Support Role ID</label><input id="s_role" value="${lic.support_role_id||""}"></div>
-        <div class="form-group"><label>رسالة الكلايم <small style="color:#8892a4">({claimer} للمنشن، {username} للاسم)</small></label><input id="s_claim_msg" value="${lic.claim_message||""}" placeholder="📌 Ticket claimed by {claimer}"></div>
-        <div class="form-group"><label>نوع رسالة الكلايم</label>
-          <select id="s_claim_type" style="background:#0d1117;border:1px solid #2d3148;border-radius:8px;padding:10px 14px;color:#e2e8f0;font-size:14px;width:100%">
-            <option value="channel" ${(lic.claim_type||'channel')==='channel'?'selected':''}>رسالة في القناة (يشوفها الكل)</option>
-            <option value="dm" ${lic.claim_type==='dm'?'selected':''}>Dismiss Message (يشوفها المرسل فقط)</option>
-          </select>
-        </div>
         <div class="form-group"><label>Log Channel ID <small style="color:#8892a4">(روم اللوق — يُنشأ تلقائياً لو فارغ)</small></label><input id="s_log" value="${lic.log_channel_id||""}"></div>
         <div class="form-group"><label>Closed Role ID <small style="color:#8892a4">(رتبة تشوف التيكتات المغلقة)</small></label><input id="s_closed" value="${lic.closed_role_id||""}"></div>
         <button class="btn btn-primary" onclick="saveBot()">💾 حفظ</button>
@@ -627,7 +647,7 @@ app.get("/dashboard/settings", requireAuth, requireOwner, async (req, res) => {
     </div>
     <script>
     const g=id=>document.getElementById(id).value;
-    async function saveBot(){const r=await post('/api/settings/save',{bot_token:g('s_tok')||null,guild_id:g('s_guild')||null,dashboard_url:g('s_url')||null,support_role_id:g('s_role')||null,log_channel_id:g('s_log')||null,closed_role_id:g('s_closed')||null,claim_message:g('s_claim_msg')||null,claim_type:g('s_claim_type')||'channel'});toast(r.ok?'✅ تم':'❌ '+r.error,r.ok)}
+    async function saveBot(){const r=await post('/api/settings/save',{bot_token:g('s_tok')||null,guild_id:g('s_guild')||null,dashboard_url:g('s_url')||null,support_role_id:g('s_role')||null,log_channel_id:g('s_log')||null,closed_role_id:g('s_closed')||null});toast(r.ok?'✅ تم':'❌ '+r.error,r.ok)}
     function addRole(){
       const div=document.createElement('div');
       div.className='card';div.style.cssText='background:#0d1117;margin-bottom:12px';
