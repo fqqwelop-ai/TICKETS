@@ -64,8 +64,14 @@ async function initDB() {
     ALTER TABLE licenses ADD COLUMN IF NOT EXISTS closed_role_id TEXT;
     ALTER TABLE licenses ADD COLUMN IF NOT EXISTS claim_message TEXT;
     ALTER TABLE licenses ADD COLUMN IF NOT EXISTS claim_type TEXT DEFAULT 'channel';
+    ALTER TABLE licenses ADD COLUMN IF NOT EXISTS close_duration_options TEXT DEFAULT '[{"label":"15 دقيقة","minutes":15},{"label":"30 دقيقة","minutes":30},{"label":"ساعة","minutes":60},{"label":"ساعتين","minutes":120},{"label":"3 ساعات","minutes":180},{"label":"يوم","minutes":1440},{"label":"يومين","minutes":2880}]';
+    ALTER TABLE licenses ADD COLUMN IF NOT EXISTS admin_reminder_label TEXT DEFAULT '🔔 تذكير الإداري';
+    ALTER TABLE licenses ADD COLUMN IF NOT EXISTS admin_reminder_message TEXT DEFAULT '🔔 تذكير: هذه التذكرة تحتاج ردكم';
+    ALTER TABLE licenses ADD COLUMN IF NOT EXISTS player_reminder_label TEXT DEFAULT '🔔 تذكير العضو';
+    ALTER TABLE licenses ADD COLUMN IF NOT EXISTS player_reminder_message TEXT DEFAULT '🔔 تذكير: الرجاء الرد على تذكرتك';
     ALTER TABLE panels ADD COLUMN IF NOT EXISTS log_channel_id TEXT;
     ALTER TABLE panels ADD COLUMN IF NOT EXISTS start_counter INT DEFAULT 0;
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS scheduled_close_at TIMESTAMPTZ;
 
     CREATE TABLE IF NOT EXISTS closed_tickets (
       id          SERIAL PRIMARY KEY,
@@ -123,6 +129,18 @@ async function closeTicket(channelId) { await pool.query("UPDATE tickets SET clo
 async function claimTicket(channelId, userId) { await pool.query("UPDATE tickets SET claimed_by=$2 WHERE channel_id=$1", [channelId, userId]); }
 async function getActiveTickets(licenseKey) {
   const r = await pool.query("SELECT * FROM tickets WHERE license_key=$1 AND closed=FALSE ORDER BY created_at DESC", [licenseKey]);
+  return r.rows;
+}
+async function scheduleTicketClose(channelId, closeAt) {
+  await pool.query("UPDATE tickets SET scheduled_close_at=$2 WHERE channel_id=$1", [channelId, closeAt]);
+}
+async function clearScheduledClose(channelId) {
+  await pool.query("UPDATE tickets SET scheduled_close_at=NULL WHERE channel_id=$1", [channelId]);
+}
+async function getDueTickets() {
+  const r = await pool.query(
+    "SELECT * FROM tickets WHERE closed=FALSE AND scheduled_close_at IS NOT NULL AND scheduled_close_at <= NOW()"
+  );
   return r.rows;
 }
 async function nextTicketNum(licenseKey, panelId) {
@@ -193,6 +211,7 @@ module.exports = {
   pool, initDB,
   getLicense, getLicenseByUser, getLicenseByDiscord, getAllLicenses, createLicense, updateLicense, deleteLicense,
   saveTicket, getTicket, getOpenTicket, closeTicket, claimTicket, getActiveTickets, nextTicketNum,
+  scheduleTicketClose, clearScheduledClose, getDueTickets,
   getPanels, getPanel, savePanel, deletePanel, resetPanelCounter,
   saveClosedTicket, saveClosedTicketReturn, getClosedTickets,
 };
